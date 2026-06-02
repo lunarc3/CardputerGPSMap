@@ -57,9 +57,11 @@ PC side:
 2. Go to OpenStreetMap and download the map you want.
 3. Run the converter on your PC, and it will do the conversion for you.
    **You need to open the terminal and run `pip install protobuf grpcio-tools numpy Pillow` once first.**
+   
    **For just playing around—even a movie-style doomsday scenario—z12 is basically sufficient. If you want more detail and don't mind larger storage and longer conversion times, feel free to experiment with z13, z14, z15.**
+   
    **Some people might want to use the small map converter (e.g., if your OSM file is only about 100MB); see the notes below. This is optional, the default converter works just as well.**
-4. Put the converted files onto an SD card.
+5. Put the converted files onto an SD card.
 
 ## File Storage Notes
 
