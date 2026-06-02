@@ -35,15 +35,15 @@ The official LoRa hat will give you a much better experience, but you can use it
 ## Cardputer Operation Guide
 
 In map mode,
-↑↓←→ to pan around
+- ↑↓←→ to pan around
 
-Esc (` key) to return to your current GPS location
+- Esc (` key) to return to your current GPS location
 
-Z to zoom out, X to zoom in
+- Z to zoom out, X to zoom in
 
-Enter to take a screenshot—if someone wants to post it to Instagram or whatever
+- Enter to take a screenshot—if someone wants to post it to Instagram or whatever
 
-Tab to switch screens: GPS info screen and map screen
+- Tab to switch screens: GPS info screen and map screen
 
 Intuitive, right?
 
