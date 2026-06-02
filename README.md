@@ -56,6 +56,7 @@ PC side:
 1. Download the Python-format converter (hosted on GitHub, released separately from the bin file; get the latest one).
 2. Go to OpenStreetMap and download the map you want.
 3. Run the converter on your PC, and it will do the conversion for you.
+
    **You need to open the terminal and run `pip install protobuf grpcio-tools numpy Pillow` once first.**
    
    **For just playing around—even a movie-style doomsday scenario—z12 is basically sufficient. If you want more detail and don't mind larger storage and longer conversion times, feel free to experiment with z13, z14, z15.**
