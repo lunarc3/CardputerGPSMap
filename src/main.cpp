@@ -1,16 +1,16 @@
 /*
  * Offline Map Viewer — Cardputer ADV (ESP32-S3FN8) No PSRAM
  *
- * Screen:  240×135 TFT (after rotation 1, landscape orientation)
- * GPS:     UART2 → RX=15, TX=13 (ATGM336H, 115200)
- * SD:      CS=12, MOSI=14, CLK=40, MISO=39
+ * Screen:  240×135 TFT
+ * GPS:   UART2 → RX=15, TX=13 (ATGM336H, 115200)
+ * SD:    CS=12, MOSI=14, CLK=40, MISO=39
  *
- * Buttons:
- *   Tab      Switch between GPS info / map
- *   ; . , /  Pan map (long press for continuous)
- *   z / x    Zoom out / in (only on rising edge, not repeat on hold)
- *   `        Go to GPS position
- *   Enter    Save screenshot to SD
+ * Keys:
+ *   Tab      Switch between GPS info / Map
+ *   ; . , /  Map pan (long press continuous)
+ *   z / x    Map zoom out / zoom in (only on press)
+ *   `        Return to GPS position
+ *   Enter    Screenshot save to SD
  *
  * SD card structure:
  *   /gpsmap/
@@ -62,11 +62,10 @@
 #define MOVE_THRESH   0.00001
 #define REDRAW_MS     300
 #define SAVE_INTERVAL 60000
-
 #define HDR_H         12
 
 // ═══════════════════════════════════════════
-//  Screen enumeration
+//  Screen Enum
 // ═══════════════════════════════════════════
 
 enum ScreenID { SCR_GPS_INFO = 0, SCR_MAP, SCR_COUNT };
@@ -74,7 +73,7 @@ ScreenID currentScreen = SCR_GPS_INFO;
 bool     autoSwitched  = false;
 
 // ═══════════════════════════════════════════
-//  Constellation data (NMEA parsing)
+//  Constellation Data (NMEA parsing)
 // ═══════════════════════════════════════════
 
 #define NUM_CONST 4
@@ -82,7 +81,7 @@ bool     autoSwitched  = false;
 struct ConstInfo {
     const char*   name;
     uint16_t      color;
-    int           visible;     // ← Note: member name is 'visible'
+    int           visible;
     int           used;
     unsigned long lastGSV;
     unsigned long lastGSA;
@@ -101,7 +100,7 @@ int    ggaFixQuality = 0;
 String nmeaLineBuf   = "";
 
 // ═══════════════════════════════════════════
-//  Global state
+//  Global State
 // ═══════════════════════════════════════════
 
 TinyGPSPlus     gps;
@@ -129,9 +128,9 @@ M5Canvas  *jpegCanvas = nullptr;
 
 bool          showSavedMsg = false;
 unsigned long savedMsgTime = 0;
-int           shotNum      = 0;   // Screenshot counter, made global to support scanning
+int           shotNum      = 0;
 
-// Rising edge detection for zoom buttons
+// Zoom key rising edge detection
 bool lastZState = false;
 bool lastXState = false;
 
@@ -155,7 +154,7 @@ void initGPS() {
 }
 
 // ═══════════════════════════════════════════
-//  Position save / load
+//  Position Save / Load
 // ═══════════════════════════════════════════
 
 void saveLastPosition() {
@@ -190,7 +189,7 @@ bool loadLastPosition() {
 }
 
 // ═══════════════════════════════════════════
-//  Screenshot counter initialization (scan existing files)
+//  Screenshot Counter Initialization
 // ═══════════════════════════════════════════
 
 void initScreenshotCounter() {
@@ -207,6 +206,11 @@ void initScreenshotCounter() {
         if (!entry) break;
         String name = entry.name();
         entry.close();
+
+        // Extract pure filename (compatible with SD library versions that return full path)
+        int lastSlash = name.lastIndexOf('/');
+        if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+
         if (name.startsWith("shot_") && name.endsWith(".bmp")) {
             String numStr = name.substring(5, name.length() - 4);
             int num = numStr.toInt();
@@ -218,7 +222,7 @@ void initScreenshotCounter() {
 }
 
 // ═══════════════════════════════════════════
-//  Coordinate conversion
+//  Coordinate Conversion
 // ═══════════════════════════════════════════
 
 static inline double deg2rad(double d) {
@@ -228,7 +232,6 @@ static inline double deg2rad(double d) {
 void toTile(double la, double lo, int z, int &tx, int &ty) {
     double n = (double)(1 << z);
     tx = (int)((lo + 180.0) / 360.0 * n);
-    // asinh(tan(rad)) is equivalent to standard Mercator formula: log(tan(rad) + sec(rad))
     ty = (int)((1.0 - asinh(tan(deg2rad(la))) / M_PI) / 2.0 * n);
 }
 
@@ -239,7 +242,7 @@ void toPixel(double la, double lo, int z, double &px, double &py) {
 }
 
 // ═══════════════════════════════════════════
-//  NMEA parsing
+//  NMEA Parsing
 // ═══════════════════════════════════════════
 
 String getNmeaField(const String& line, int num) {
@@ -263,7 +266,7 @@ void handleGSV(const String& line) {
     if (ci < 0) return;
     String f3 = getNmeaField(line, 3);
     if (f3.length() > 0) {
-        constInfo[ci].visible = f3.toInt();   // ✅ visible
+        constInfo[ci].visible = f3.toInt();
         constInfo[ci].lastGSV = millis();
     }
 }
@@ -324,7 +327,7 @@ static int lastWday(int y, int m, int wday) {
 }
 
 static int getDST(int y, int mon, int d, int utcH, float lat, float lon) {
-    // Keep original logic unchanged (full implementation omitted for brevity)
+    // North America
     if (lat > 24 && lat < 72 && lon > -140 && lon < -50) {
         if (lat < 23 && lon < -154) return 0;
         if (lat > 31 && lat < 37.5f && lon > -115 && lon < -109) return 0;
@@ -339,6 +342,7 @@ static int getDST(int y, int mon, int d, int utcH, float lat, float lon) {
         if (mon == 11) return (ld < eD || (ld == eD && lh < 1)) ? 1 : 0;
         return 0;
     }
+    // Europe
     if (lat > 34 && lat < 72 && lon > -12 && lon < 45) {
         int sD = lastWday(y, 3, 0), eD = lastWday(y, 10, 0);
         if (mon > 3 && mon < 10) return 1;
@@ -347,6 +351,7 @@ static int getDST(int y, int mon, int d, int utcH, float lat, float lon) {
         if (mon == 10) return (d < eD || (d == eD && utcH < 1)) ? 1 : 0;
         return 0;
     }
+    // Southern Australia
     if (lat < -28 && lon > 138 && lon < 155) {
         int sD = nthWday(y, 10, 0, 1), eD = nthWday(y, 4, 0, 1);
         int lh = utcH + 10, ld = d;
@@ -357,6 +362,7 @@ static int getDST(int y, int mon, int d, int utcH, float lat, float lon) {
         if (mon == 4)  return (ld < eD || (ld == eD && lh < 2)) ? 1 : 0;
         return 0;
     }
+    // New Zealand
     if (lat < -34 && lon > 165) {
         int sD = lastWday(y, 9, 0), eD = nthWday(y, 4, 0, 1);
         int lh = utcH + 12, ld = d;
@@ -429,12 +435,12 @@ int getTotalSatellites() {
     int t = 0;
     for (int i = 0; i < NUM_CONST; i++)
         if (millis() - constInfo[i].lastGSV < 10000)
-            t += constInfo[i].visible;   // ✅ fixed
+            t += constInfo[i].visible;
     return t;
 }
 
 // ═══════════════════════════════════════════
-//  JPEG decoding (endianness fix)
+//  JPEG Decoding (Byte order correction)
 // ═══════════════════════════════════════════
 
 int jpegDrawCB(JPEGDRAW *p) {
@@ -455,7 +461,7 @@ int jpegDrawCB(JPEGDRAW *p) {
 }
 
 // ═══════════════════════════════════════════
-//  Tile loading
+//  Tile Loading
 // ═══════════════════════════════════════════
 
 bool drawTile(int tx, int ty, int z, int sx, int sy) {
@@ -479,7 +485,7 @@ bool drawTile(int tx, int ty, int z, int sx, int sy) {
 }
 
 // ═══════════════════════════════════════════
-//  Screenshot (BMP) — uses global shotNum
+//  Screenshot (BMP)
 // ═══════════════════════════════════════════
 
 bool saveScreenshot() {
@@ -531,7 +537,7 @@ bool saveScreenshot() {
 }
 
 // ═══════════════════════════════════════════
-//  GPS info screen
+//  GPS Info Page
 // ═══════════════════════════════════════════
 
 void drawScreenGpsInfo() {
@@ -573,7 +579,7 @@ void drawScreenGpsInfo() {
         y += 12;
     }
 
-    // Positioning info
+    // Position Info
     cv->setTextSize(1);
     const char* fq = "---";
     if      (ggaFixQuality == 1) fq = "GPS";
@@ -597,7 +603,7 @@ void drawScreenGpsInfo() {
     // Constellation bars
     int maxVis = 1;
     for (int i = 0; i < NUM_CONST; i++)
-        if (constInfo[i].visible > maxVis) maxVis = constInfo[i].visible;  // ✅ visible
+        if (constInfo[i].visible > maxVis) maxVis = constInfo[i].visible;
 
     int barX = 94, barMaxW = 100;
     for (int i = 0; i < NUM_CONST; i++) {
@@ -612,15 +618,15 @@ void drawScreenGpsInfo() {
         cv->setCursor(50, y);
         if (act) {
             cv->setTextColor(TFT_WHITE, TFT_BLACK);
-            cv->printf("%2d/%2d", ci.used, ci.visible);  // ✅ visible
+            cv->printf("%2d/%2d", ci.used, ci.visible);
         } else {
             cv->setTextColor(0x4208, TFT_BLACK);
             cv->print(" --/--");
         }
 
         cv->drawRect(barX, y, barMaxW + 2, 8, TFT_DARKGREY);
-        if (act && ci.visible > 0) {                        // ✅ visible
-            int visW  = ci.visible * barMaxW / maxVis;      // ✅ visible
+        if (act && ci.visible > 0) {
+            int visW  = ci.visible * barMaxW / maxVis;
             int usedW = ci.used * barMaxW / maxVis;
             cv->fillRect(barX + 1, y + 1, visW, 6, 0x2104);
             if (usedW > 0)
@@ -632,7 +638,7 @@ void drawScreenGpsInfo() {
     cv->drawLine(4, y, scrW - 4, y, TFT_DARKGREY);
     y += 4;
 
-    // Coordinates & speed
+    // Coordinates & Speed
     if (gpsFix || gps.location.isValid()) {
         cv->setTextSize(1);
         cv->setTextColor(TFT_GREEN, TFT_BLACK);
@@ -657,7 +663,7 @@ void drawScreenGpsInfo() {
 }
 
 // ═══════════════════════════════════════════
-//  Map screen (complete version)
+//  Map Page
 // ═══════════════════════════════════════════
 
 void drawScreenMap() {
@@ -696,6 +702,7 @@ void drawScreenMap() {
         }
     }
 
+    // Position cursor
     int mx = scrW / 2 - panX;
     int my = scrH / 2 - panY;
     if (0 <= mx && mx < scrW && 0 <= my && my < scrH) {
@@ -703,6 +710,7 @@ void drawScreenMap() {
         cv->fillCircle(mx, my, 2, TFT_RED);
     }
 
+    // Top bar
     cv->fillRect(0, 0, scrW, HDR_H, 0x0000);
     cv->setTextSize(1);
 
@@ -737,4 +745,233 @@ void drawScreenMap() {
         cv->setTextColor(TFT_YELLOW, 0x0000);
         cv->drawCenterString("Searching GPS...", scrW / 2, scrH - 11);
     }
+}
+
+// ═══════════════════════════════════════════
+//  Screen Scheduling
+// ═══════════════════════════════════════════
+
+void updateScreen(bool force = false) {
+    static unsigned long lastUpdate = 0;
+    unsigned long now = millis();
+
+    if (currentScreen == SCR_GPS_INFO) {
+        if (!force && now - lastUpdate < 500) return;
+    } else {
+        if (!force && !dirty) return;
+        if (!force && now - lastUpdate < REDRAW_MS) return;
+        dirty = false;
+    }
+    lastUpdate = now;
+
+    cv->fillScreen(TFT_BLACK);
+
+    switch (currentScreen) {
+        case SCR_GPS_INFO: drawScreenGpsInfo(); break;
+        case SCR_MAP:      drawScreenMap();     break;
+    }
+
+    if (showSavedMsg) {
+        if (now - savedMsgTime < 1500) {
+            cv->fillRect(70, 55, 100, 25, TFT_BLACK);
+            cv->drawRect(70, 55, 100, 25, TFT_GREEN);
+            cv->setTextColor(TFT_GREEN, TFT_BLACK);
+            cv->setTextSize(1);
+            cv->drawCenterString("Saved!", scrW / 2, 63);
+        } else {
+            showSavedMsg = false;
+        }
+    }
+
+    cv->pushSprite(0, 0);
+}
+
+// ═══════════════════════════════════════════
+//  GPS Reading
+// ═══════════════════════════════════════════
+
+void readGPS() {
+    while (GPS_Serial.available()) {
+        char c = GPS_Serial.read();
+        gps.encode(c);
+
+        if (c == '\n') {
+            nmeaLineBuf.trim();
+            if (nmeaLineBuf.startsWith("$"))
+                parseNmeaLine(nmeaLineBuf);
+            nmeaLineBuf = "";
+        } else if (c != '\r') {
+            nmeaLineBuf += c;
+        }
+    }
+
+    if (gps.location.isUpdated() && gps.location.isValid()) {
+        double nlat = gps.location.lat();
+        double nlon = gps.location.lng();
+        if (!gpsFix ||
+            fabs(nlat - curLat) > MOVE_THRESH ||
+            fabs(nlon - curLon) > MOVE_THRESH)
+        {
+            curLat  = nlat;
+            curLon  = nlon;
+            gpsFix  = true;
+            panning = false;
+            dirty   = true;
+
+            if (!autoSwitched) {
+                currentScreen = SCR_MAP;
+                autoSwitched  = true;
+            }
+        }
+    }
+
+    if (gpsFix && millis() - lastSave >= SAVE_INTERVAL) {
+        lastSave = millis();
+        saveLastPosition();
+    }
+}
+
+// ═══════════════════════════════════════════
+//  Keyboard
+// ═══════════════════════════════════════════
+
+void handleInput() {
+    M5Cardputer.update();
+
+    // Zoom keys: rising edge detection
+    bool curZ = M5Cardputer.Keyboard.isKeyPressed('z');
+    bool curX = M5Cardputer.Keyboard.isKeyPressed('x');
+
+    if (curZ && !lastZState) {
+        if (curZoom > ZOOM_MIN) { curZoom--; dirty = true; }
+    }
+    if (curX && !lastXState) {
+        if (curZoom < ZOOM_MAX) { curZoom++; dirty = true; }
+    }
+    lastZState = curZ;
+    lastXState = curX;
+
+    if (M5Cardputer.Keyboard.isChange()) {
+        if (M5Cardputer.Keyboard.isPressed()) {
+            Keyboard_Class::KeysState status =
+                M5Cardputer.Keyboard.keysState();
+
+            // Tab: Switch
+            if (status.tab) {
+                currentScreen = (ScreenID)((currentScreen + 1) % SCR_COUNT);
+                dirUp = dirDown = dirLeft = dirRight = false;
+                dirty = true;
+                updateScreen(true);
+                delay(200);
+                return;
+            }
+
+            // Enter: Screenshot
+            if (status.enter) {
+                if (saveScreenshot()) {
+                    showSavedMsg = true;
+                    savedMsgTime = millis();
+                    dirty = true;
+                }
+                delay(200);
+                return;
+            }
+
+            // Map page keys
+            if (currentScreen == SCR_MAP) {
+                dirUp = dirDown = dirLeft = dirRight = false;
+
+                for (auto c : status.word) {
+                    if (c == 'z' || c == 'x') continue;
+                    switch (c) {
+                        case ';': dirUp    = true; break;
+                        case '.': dirDown  = true; break;
+                        case ',': dirLeft  = true; break;
+                        case '/': dirRight = true; break;
+                        case '`':
+                            panX = panY = 0;
+                            if (gpsFix) panning = false;
+                            dirty = true;
+                            break;
+                    }
+                }
+
+                if (dirUp || dirDown || dirLeft || dirRight) {
+                    int fpx = (dirRight ? 1 : 0) - (dirLeft ? 1 : 0);
+                    int fpy = (dirDown  ? 1 : 0) - (dirUp   ? 1 : 0);
+                    panX += fpx * PAN_STEP;
+                    panY += fpy * PAN_STEP;
+                    panning = true;
+                    dirty   = true;
+                    lastDirStep = millis();
+                }
+            }
+        } else {
+            dirUp = dirDown = dirLeft = dirRight = false;
+        }
+    }
+}
+
+// ═══════════════════════════════════════════
+//  setup
+// ═══════════════════════════════════════════
+
+void setup() {
+    auto cfg = M5.config();
+    M5Cardputer.begin(cfg, true);
+    M5Cardputer.Display.setRotation(1);
+
+    scrW = M5Cardputer.Display.width();
+    scrH = M5Cardputer.Display.height();
+
+    initGPS();
+
+    SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+    if (!SD.begin(SD_CS_PIN)) {
+        M5Cardputer.Display.fillScreen(TFT_BLACK);
+        M5Cardputer.Display.setTextColor(TFT_RED);
+        M5Cardputer.Display.setTextSize(2);
+        M5Cardputer.Display.drawCenterString("SD ERROR",
+                                              scrW / 2, scrH / 2 - 8);
+        while (1) delay(1000);
+    }
+
+    cv = new M5Canvas(&M5Cardputer.Display);
+    if (!cv->createSprite(scrW, scrH)) {
+        M5Cardputer.Display.fillScreen(TFT_BLACK);
+        M5Cardputer.Display.setTextColor(TFT_RED);
+        M5Cardputer.Display.setTextSize(1);
+        M5Cardputer.Display.drawString("Canvas alloc fail", 10, 10);
+        while (1) delay(1000);
+    }
+
+    initScreenshotCounter();
+    hasLastPos = loadLastPosition();
+
+    updateScreen(true);
+}
+
+// ═══════════════════════════════════════════
+//  loop
+// ═══════════════════════════════════════════
+
+void loop() {
+    readGPS();
+    handleInput();
+
+    if (currentScreen == SCR_MAP &&
+        (dirUp || dirDown || dirLeft || dirRight) &&
+        millis() - lastDirStep >= DIR_REPEAT_MS)
+    {
+        int fpx = (dirRight ? 1 : 0) - (dirLeft ? 1 : 0);
+        int fpy = (dirDown  ? 1 : 0) - (dirUp   ? 1 : 0);
+        panX += fpx * PAN_STEP;
+        panY += fpy * PAN_STEP;
+        panning = true;
+        dirty   = true;
+        lastDirStep = millis();
+    }
+
+    updateScreen();
+    delay(10);
 }
