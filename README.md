@@ -36,10 +36,13 @@ The official LoRa hat will give you a much better experience, but you can use it
 
 In map mode,
 ↑↓←→ to pan around
+
 Esc (` key) to return to your current GPS location
+
 Z to zoom out, X to zoom in
 
 Enter to take a screenshot—if someone wants to post it to Instagram or whatever
+
 Tab to switch screens: GPS info screen and map screen
 
 Intuitive, right?
