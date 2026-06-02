@@ -657,7 +657,7 @@ void drawScreenGpsInfo() {
 }
 
 // ═══════════════════════════════════════════
-//  Map screen
+//  Map screen (complete version)
 // ═══════════════════════════════════════════
 
 void drawScreenMap() {
@@ -728,4 +728,13 @@ void drawScreenMap() {
     } else {
         char satBuf[10];
         snprintf(satBuf, sizeof(satBuf), "[%d]", totalSat);
-        cv->setTextColor(TFT
+        cv->setTextColor(TFT_WHITE, 0x0000);
+        cv->drawString(satBuf, scrW - cv->textWidth(satBuf) - 4, 2);
+    }
+
+    if (!gpsFix) {
+        cv->fillRect(0, scrH - 12, scrW, 12, 0x0000);
+        cv->setTextColor(TFT_YELLOW, 0x0000);
+        cv->drawCenterString("Searching GPS...", scrW / 2, scrH - 11);
+    }
+}
