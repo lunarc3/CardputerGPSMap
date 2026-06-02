@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """
-osm_to_tiles.py — OSM PBF → JPEG Tiles
-Chunked rendering + spatial index + blank skipping (multi-province merge safe)
+osm_to_tiles.py — OSM PBF → JPEG tiles
+Chunked rendering + spatial index + blank skipping
 
 Features:
-  - Spatial index: chunk only processes nearby features (~100x speedup)
-  - Chunked rendering: 16x16 tiles/chunk, 4096px canvas
-  - Blank skipping: empty tiles not saved (multi-province merge safe)
-  - Auto-detect .osm.pbf files in the same directory
+  - Spatial index: chunk only processes nearby features
+  - Chunked rendering: 16×16 tiles/chunk, 4096px canvas
+  - Blank skipping: empty tiles are not saved
+  - Interactive zoom level input
+  - Auto-detect .osm.pbf files
+  - Multi-file merge hint
+  - JPEG 4:4:4 no subsampling (crisp and sharp)
 
 Usage:
-  python osm_to_tiles.py input.osm.pbf -z 12-13 -b S,W,N,E -q 75
-  python osm_to_tiles.py -z 12-13                        (auto-detect .osm.pbf)
-  python osm_to_tiles.py -z 12-13 -b [S,W,N,E]
+  python osm_to_tiles.py input.osm.pbf -z 12-14 -b S,W,N,E -q 75
+  python osm_to_tiles.py -z 12-14
+  python osm_to_tiles.py                                    (interactive mode)
 """
 
 import argparse
@@ -27,7 +30,7 @@ try:
     import osmium
     from PIL import Image, ImageDraw, ImageFont
 except ImportError as e:
-    print(f"Missing dependencies: {e}\nInstall: pip install osmium Pillow")
+    print(f"Missing dependency: {e}\nInstall: pip install osmium Pillow")
     sys.exit(1)
 
 # ═══════════════════════════════════════════
@@ -39,6 +42,8 @@ CHUNK    = 16
 CELL_DEG = 0.01
 
 DEFAULT_OUTPUT = "gpsmap"
+MIN_ZOOM = 12
+MAX_ZOOM = 18
 
 BG       = '#f2efe9'
 WATER    = '#aad3df'
@@ -85,7 +90,7 @@ ROAD_ORDER = [
 
 
 # ═══════════════════════════════════════════
-#  Output functions (fix PowerShell buffering)
+#  Output (flush fix for PowerShell)
 # ═══════════════════════════════════════════
 
 def log(msg=""):
@@ -97,40 +102,35 @@ def log(msg=""):
 # ═══════════════════════════════════════════
 
 def detect_pbf_files():
-    """Scan current directory for .osm.pbf files"""
     files = glob.glob("*.osm.pbf")
     files.sort(key=lambda f: os.path.getsize(f), reverse=True)
     return files
 
 
 def check_output_dir(out_dir):
-    """Check output directory, warn if tiles already exist"""
     if not os.path.isdir(out_dir):
         return
-
     has_tiles = False
     for z_dir in glob.glob(os.path.join(out_dir, "*")):
         if os.path.isdir(z_dir) and os.path.basename(z_dir).isdigit():
             has_tiles = True
             break
-
     if has_tiles:
         log()
         log("=" * 60)
         log(f"  Note: Output directory {out_dir}/ already contains tile files")
         log()
-        log("  If you have multiple .osm.pbf files to merge-render,")
-        log("  please merge with osmium first to avoid boundary tile issues:")
+        log("  If you have multiple .osm.pbf files to merge for rendering,")
+        log("  please merge them with osmium first to avoid boundary tile issues:")
         log()
         log("    osmium merge file1.osm.pbf file2.osm.pbf -o merged.osm.pbf")
         log()
-        log("  If rendering a single file, you can ignore this notice.")
+        log("  If you are rendering a single file, you can ignore this message.")
         log("=" * 60)
         log()
 
 
 def resolve_input_file(user_input):
-    """Determine input file: user-specified > auto-detect"""
     if user_input:
         if not os.path.exists(user_input):
             log(f"Error: File not found: {user_input}")
@@ -141,10 +141,10 @@ def resolve_input_file(user_input):
 
     if len(pbf_files) == 0:
         log()
-        log("Error: No .osm.pbf files found in current directory")
+        log("Error: No .osm.pbf file found in current directory")
         log()
-        log("Please place a .osm.pbf file in the current directory, or specify a file path:")
-        log("  python osm_to_tiles.py yourfile.osm.pbf -z 12-13")
+        log("Place an .osm.pbf file in the current directory or specify the path:")
+        log("  python osm_to_tiles.py yourfile.osm.pbf -z 12-14")
         log()
         log("Data download: https://download.geofabrik.de/asia/china.html")
         sys.exit(1)
@@ -153,7 +153,6 @@ def resolve_input_file(user_input):
         log(f"Auto-detected: {pbf_files[0]}")
         return pbf_files[0]
 
-    # Multiple files
     log()
     log("=" * 60)
     log(f"  Detected {len(pbf_files)} .osm.pbf files:")
@@ -163,17 +162,112 @@ def resolve_input_file(user_input):
         log(f"    {i}. {f}  ({size_mb:.1f} MB)")
     log()
     log("  Rendering multiple files directly will cause boundary tile data loss.")
-    log("  It is recommended to merge first then render:")
+    log("  It is recommended to merge them first:")
     log()
-
     all_files = " ".join(pbf_files)
     log(f"    osmium merge {all_files} -o merged.osm.pbf")
     log()
     log("  Then run:")
-    log("    python osm_to_tiles.py merged.osm.pbf -z 12-13")
+    log("    python osm_to_tiles.py merged.osm.pbf")
     log("=" * 60)
     log()
     sys.exit(0)
+
+
+# ═══════════════════════════════════════════
+#  Interactive parameter input
+# ═══════════════════════════════════════════
+
+def prompt_zoom():
+    """Interactive zoom level input, returns (z1, z2)"""
+    log()
+    log(f"  Zoom level range: {MIN_ZOOM} ~ {MAX_ZOOM}")
+    log(f"    {MIN_ZOOM}: ~9km/tile (global overview)")
+    log(f"    13: ~4.5km (inter-provincial roads)")
+    log(f"    14: ~2.3km (neighborhood level)")
+    log(f"    15: ~1.1km (pedestrian navigation)")
+    log(f"    16: ~0.6km (most detailed)")
+    log()
+
+    while True:
+        raw = input(f"  Start level ({MIN_ZOOM}-{MAX_ZOOM}, default {MIN_ZOOM}): ").strip()
+        if raw == "":
+            z1 = MIN_ZOOM
+            break
+        try:
+            z1 = int(raw)
+            if MIN_ZOOM <= z1 <= MAX_ZOOM:
+                break
+        except ValueError:
+            pass
+        log(f"    Please enter a number between {MIN_ZOOM} and {MAX_ZOOM}")
+
+    while True:
+        raw = input(f"  End level ({z1}-{MAX_ZOOM}, default {z1}): ").strip()
+        if raw == "":
+            z2 = z1
+            break
+        try:
+            z2 = int(raw)
+            if z1 <= z2 <= MAX_ZOOM:
+                break
+        except ValueError:
+            pass
+        log(f"    Please enter a number between {z1} and {MAX_ZOOM}")
+
+    return z1, z2
+
+
+def prompt_quality():
+    while True:
+        raw = input("  JPEG quality (1-100, default 75): ").strip()
+        if raw == "":
+            return 75
+        try:
+            q = int(raw)
+            if 1 <= q <= 100:
+                return q
+        except ValueError:
+            pass
+        log("    Please enter a number between 1 and 100")
+
+
+def prompt_bbox():
+    log()
+    raw = input("  Specify bounding box? (leave empty for auto, format S,W,N,E): ").strip()
+    if raw == "":
+        return None
+    try:
+        parts = tuple(map(float, raw.split(',')))
+        if len(parts) == 4:
+            return parts
+    except ValueError:
+        pass
+    log("    Invalid format, using auto bounds")
+    return None
+
+
+# ═══════════════════════════════════════════
+#  Storage estimation
+# ═══════════════════════════════════════════
+
+def estimate_storage(bbox, z1, z2, quality):
+    """Rough estimate of tile count and storage"""
+    avg_tile_kb = 15 * (quality / 75.0)
+    total = 0
+    for z in range(z1, z2 + 1):
+        if bbox:
+            xmin, ymax = deg2tile(bbox[0], bbox[1], z)
+            xmax, ymin = deg2tile(bbox[2], bbox[3], z)
+        else:
+            # rough estimate: global ~16M tiles, with data ~3.4M
+            scale = 4 ** (z - 12)
+            total += int(3400000 * scale / 100)  # assume 1% area
+            continue
+        nx = xmax - xmin + 1
+        ny = ymax - ymin + 1
+        total += nx * ny
+    return total, int(total * avg_tile_kb / 1024)
 
 
 # ═══════════════════════════════════════════
@@ -425,7 +519,7 @@ def mark_point_tile(content, gpx, gpy, ox, oy, tw, th):
 
 
 # ═══════════════════════════════════════════
-#  Chunked rendering
+#  Chunk rendering
 # ═══════════════════════════════════════════
 
 def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
@@ -453,7 +547,7 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
                 pts.append((gpx - ox, gpy - oy))
         return pts
 
-    # 1. Land use
+    # 1. Landuse
     for idx in data.idx['landuse'].query(cb):
         nids, bb, color = data.landuse[idx]
         if not bbox_intersect(bb, cb):
@@ -466,7 +560,7 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
             except Exception:
                 pass
 
-    # 2. Water bodies (areas)
+    # 2. Water areas
     for idx in data.idx['water_areas'].query(cb):
         nids, bb = data.water_areas[idx]
         if not bbox_intersect(bb, cb):
@@ -479,7 +573,7 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
             except Exception:
                 pass
 
-    # 3. Waterways (lines)
+    # 3. Water lines
     for idx in data.idx['water_lines'].query(cb):
         nids, bb = data.water_lines[idx]
         if not bbox_intersect(bb, cb):
@@ -556,7 +650,7 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
                     dr.text((x + 2, y - 7), txt, fill='#333333', font=font)
                     mark_point_tile(content, gpx, gpy, ox, oy, tw, th)
 
-    # 7. Save non-empty tiles
+    # 7. Save tiles that have content
     saved, skipped = 0, 0
     for tx_off in range(tw):
         for ty_off in range(th):
@@ -571,7 +665,7 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
             ly = ty_off * TILE
             img.crop((lx, ly, lx + TILE, ly + TILE)).save(
                 os.path.join(tdir, f"{ty}.jpg"),
-                'JPEG', quality=quality
+                'JPEG', quality=quality, subsampling=0
             )
             saved += 1
 
@@ -585,53 +679,75 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
 
 def main():
     ap = argparse.ArgumentParser(
-        description='OSM PBF → JPEG Tiles (chunked rendering + spatial index)')
+        description='OSM PBF → JPEG tiles (chunked rendering + spatial index)')
     ap.add_argument('input', nargs='?', default=None,
-                    help='.osm.pbf file (auto-detect in current directory if not specified)')
+                    help='.osm.pbf file (auto‑detect if omitted)')
     ap.add_argument('-o', '--output', default=DEFAULT_OUTPUT,
                     help=f'Output directory (default: ./{DEFAULT_OUTPUT})')
-    ap.add_argument('-z', '--zoom', default='14-16',
-                    help='Zoom levels (e.g. 12-13 or 15)')
+    ap.add_argument('-z', '--zoom', default=None,
+                    help='Zoom levels (e.g. 12-14, interactive if omitted)')
     ap.add_argument('-b', '--bbox',
-                    help='Bounding box S,W,N,E (e.g. 31.4,110.3,36.4,116.7)')
-    ap.add_argument('-q', '--quality', type=int, default=75,
-                    help='JPEG quality 1-100 (default: 75)')
+                    help='Bounding box S,W,N,E')
+    ap.add_argument('-q', '--quality', type=int, default=None,
+                    help='JPEG quality 1-100 (interactive if omitted)')
     args = ap.parse_args()
 
-    # ── Startup banner ──
+    # ── startup banner ──
     log()
     log("=" * 55)
     log("  OSM Offline Tile Generator")
     log("  Chunked rendering + spatial index + blank skipping")
     log("=" * 55)
 
-    # ── Determine input file ──
+    # ── determine input file ──
     input_file = resolve_input_file(args.input)
 
-    # ── Check output directory ──
+    # ── check output directory ──
     out_dir = args.output
     check_output_dir(out_dir)
     os.makedirs(out_dir, exist_ok=True)
 
-    # ── Parameters ──
-    z_parts = args.zoom.split('-')
-    z1 = int(z_parts[0])
-    z2 = int(z_parts[-1])
+    # ── zoom levels ──
+    if args.zoom:
+        z_parts = args.zoom.split('-')
+        z1 = int(z_parts[0])
+        z2 = int(z_parts[-1])
+    else:
+        log()
+        log("  No zoom level specified, entering interactive mode...")
+        z1, z2 = prompt_zoom()
 
+    # ── JPEG quality ──
+    if args.quality:
+        quality = args.quality
+    else:
+        if not args.zoom:  # ask quality only in interactive mode
+            quality = prompt_quality()
+        else:
+            quality = 75
+
+    # ── bounding box ──
     bbox = None
     if args.bbox:
         bbox = tuple(map(float, args.bbox.split(',')))
         assert len(bbox) == 4, "bbox format: S,W,N,E"
+    elif not args.zoom:  # interactive mode
+        bbox = prompt_bbox()
 
+    # ── parameter summary ──
     log()
     log(f"  Input:   {input_file}")
     log(f"  Output:  {os.path.abspath(out_dir)}/")
     log(f"  Zoom:    z{z1} ~ z{z2}")
-    log(f"  Quality: {args.quality}")
+    log(f"  Quality: {quality}")
     if bbox:
         log(f"  Bounds:  S={bbox[0]} W={bbox[1]} N={bbox[2]} E={bbox[3]}")
     else:
-        log(f"  Bounds:  Auto (data extent)")
+        log(f"  Bounds:  auto (data extent)")
+
+    # ── storage estimate ──
+    est_tiles, est_mb = estimate_storage(bbox, z1, z2, quality)
+    log(f"  Estimate: ~{est_tiles:,} tiles, ~{est_mb:,} MB")
     log()
 
     # ── Phase 1: Read data ──
@@ -640,7 +756,7 @@ def main():
     dc = DataCollector(bbox)
     dc.apply_file(input_file, locations=True)
     dt = time.time() - t0
-    log(f"  Elapsed {dt:.1f}s")
+    log(f"  Time {dt:.1f}s")
     log(f"  Nodes {len(dc.nodes):,}  Roads {len(dc.roads):,}  "
         f"Buildings {len(dc.buildings):,}  "
         f"Water {len(dc.water_areas) + len(dc.water_lines):,}  "
@@ -657,7 +773,7 @@ def main():
     dc.build_indices()
     dt = time.time() - t0
     idx_cells = sum(len(v.cells) for v in dc.idx.values())
-    log(f"  Elapsed {dt:.1f}s  ({idx_cells:,} grid cells)")
+    log(f"  Time {dt:.1f}s  ({idx_cells:,} grid cells)")
 
     # ── Phase 3: Render tiles ──
     log(f"\n[3/3] Rendering zoom {z1}~{z2}  (chunk {CHUNK}x{CHUNK})")
@@ -700,7 +816,7 @@ def main():
                     continue
 
                 s, k = render_chunk(dc, txa, tya, tw, th, z,
-                                    out_dir, args.quality)
+                                    out_dir, quality)
                 saved += s
                 skipped += k
                 chunks_done += 1
@@ -710,13 +826,13 @@ def main():
                     total = saved + skipped
                     rate = total / elapsed if elapsed > 0 else 0
                     pct = chunks_done * 100 // n_chunks
-                    log(f"    [{pct:3d}%] Saved {saved:,}  "
-                        f"Skipped {skipped:,}  ({rate:,.0f} t/s)")
+                    log(f"    [{pct:3d}%] saved {saved:,} "
+                        f"skipped {skipped:,}  ({rate:,.0f} t/s)")
 
         elapsed = time.time() - ts
         total = saved + skipped
         rate = total / elapsed if elapsed > 0 else 0
-        log(f"  Zoom {z} done: Saved {saved:,}  Skipped {skipped:,}  "
+        log(f"  Zoom {z} finished: saved {saved:,}  skipped {skipped:,}  "
             f"{elapsed:.1f}s  ({rate:,.0f} t/s)")
 
         grand_saved += saved
@@ -729,10 +845,10 @@ def main():
 
     log(f"\n{'=' * 55}")
     log(f"  Done!")
-    log(f"  Saved:   {grand_saved:,} tiles")
+    log(f"  Saved: {grand_saved:,} tiles")
     log(f"  Skipped: {grand_skipped:,} (blank)")
-    log(f"  Elapsed: {total_elapsed:.1f}s  ({avg_rate:,.0f} tiles/s)")
-    log(f"  Output:  {os.path.abspath(out_dir)}/")
+    log(f"  Time: {total_elapsed:.1f}s  ({avg_rate:,.0f} tiles/s)")
+    log(f"  Output: {os.path.abspath(out_dir)}/")
     log(f"{'=' * 55}")
     log()
 
