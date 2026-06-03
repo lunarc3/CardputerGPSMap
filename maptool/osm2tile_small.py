@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-osm_to_tiles.py — OSM PBF → JPEG Tiles
-Chunked Rendering + Spatial Indexing + Blank Tile Skipping + Multilingual + Low Zoom Support
+osm_to_tiles.py — OSM PBF → JPEG tiles
+Chunked rendering + spatial index + blank tile skipping + multi-language + low zoom support
 
 Features:
-  - Zoom levels z6-z18 (z6 country panorama → z18 most detailed)
-  - Spatial indexing for acceleration
+  - Zoom levels z6-z18 (z6 country overview → z18 finest detail)
+  - Spatial index acceleration
   - Chunked rendering 16×16 tiles/chunk
-  - Blank tile skipping (Cardputer side fills background color)
+  - Blank tile skipping (Cardputer fills background)
   - Interactive parameter input
-  - Multilingual place name selection
-  - Auto-detection of .osm.pbf files
+  - Multi-language place name selection
+  - Auto-detect .osm.pbf files
   - JPEG 4:4:4 no subsampling
 
 Usage:
@@ -31,7 +31,7 @@ try:
     import osmium
     from PIL import Image, ImageDraw, ImageFont
 except ImportError as e:
-    print(f"Missing dependencies: {e}\nInstall with: pip install osmium Pillow")
+    print(f"Missing dependencies: {e}\nInstall: pip install osmium Pillow")
     sys.exit(1)
 
 # ═══════════════════════════════════════════
@@ -45,7 +45,7 @@ DEFAULT_OUTPUT = "gpsmap"
 MIN_ZOOM = 6
 MAX_ZOOM = 18
 
-# Map background color (must match BG_COLOR on the Cardputer side)
+# Map background color (must match BG_COLOR on Cardputer)
 BG = '#f2efe9'
 
 WATER    = '#aad3df'
@@ -72,21 +72,21 @@ LEISURE_COLORS = {
 }
 
 ROAD_STYLES = {
-    'motorway':      ('#e892a2', 7, 8),
-    'trunk':         ('#f9b29c', 6, 9),
-    'primary':       ('#fcd6a4', 5, 10),
-    'secondary':     ('#f7fabf', 4, 11),
-    'tertiary':      ('#ffffff', 3, 14),
-    'residential':   ('#ffffff', 2, 15),
-    'unclassified':  ('#ffffff', 2, 15),
-    'service':       ('#dddddd', 1, 16),
-    'living_street': ('#ededed', 2, 15),
-    'pedestrian':    ('#dddde8', 2, 15),
-    'footway':       ('#f9929c', 1, 16),
-    'cycleway':      ('#6bc4e8', 1, 16),
-    'path':          ('#f9929c', 1, 16),
-    'track':         ('#c8b688', 1, 15),
-    'steps':         ('#f9929c', 1, 16),
+    'motorway':      ('#e892a2', 7, 6),
+    'trunk':         ('#f9b29c', 6, 7),
+    'primary':       ('#fcd6a4', 5, 8),
+    'secondary':     ('#f7fabf', 4, 12),
+    'tertiary':      ('#ffffff', 3, 12),
+    'residential':   ('#ffffff', 2, 12),
+    'unclassified':  ('#ffffff', 2, 12),
+    'service':       ('#dddddd', 1, 12),
+    'living_street': ('#ededed', 2, 12),
+    'pedestrian':    ('#dddde8', 2, 12),
+    'footway':       ('#f9929c', 1, 12),
+    'cycleway':      ('#6bc4e8', 1, 12),
+    'path':          ('#f9929c', 1, 12),
+    'track':         ('#c8b688', 1, 12),
+    'steps':         ('#f9929c', 1, 12),
 }
 ROAD_ORDER = [
     'steps', 'footway', 'path', 'cycleway', 'track',
@@ -95,7 +95,7 @@ ROAD_ORDER = [
     'trunk', 'motorway',
 ]
 
-# Place types → Min display zoom & font size increment & dot radius
+# Place type -> minimum display zoom & font size increment & dot radius
 PLACE_TYPES = {'state', 'county', 'city', 'town', 'village', 'suburb', 'hamlet'}
 PLACE_ZOOM  = {'state': 5, 'county': 6, 'city': 7,
                'town': 9, 'village': 12, 'suburb': 13, 'hamlet': 14}
@@ -114,7 +114,7 @@ def log(msg=""):
 
 
 # ═══════════════════════════════════════════
-#  Startup Checks
+#  Startup checks
 # ═══════════════════════════════════════════
 
 def detect_pbf_files():
@@ -130,9 +130,9 @@ def check_output_dir(out_dir):
         if os.path.isdir(z_dir) and os.path.basename(z_dir).isdigit():
             log()
             log("=" * 60)
-            log(f"  Note: Output directory {out_dir}/ already contains tile files")
+            log(f"  Note: output directory {out_dir}/ already contains tile files")
             log()
-            log("  If you have multiple .osm.pbf files to merge, please run first:")
+            log("  If you need to merge multiple .osm.pbf files, first run:")
             log("    osmium merge f1.osm.pbf f2.osm.pbf -o merged.osm.pbf")
             log("=" * 60)
             log()
@@ -142,12 +142,12 @@ def check_output_dir(out_dir):
 def resolve_input_file(user_input):
     if user_input:
         if not os.path.exists(user_input):
-            log(f"Error: File does not exist: {user_input}")
+            log(f"Error: file not found: {user_input}")
             sys.exit(1)
         return user_input
     pbf = detect_pbf_files()
     if len(pbf) == 0:
-        log("\nError: No .osm.pbf files found in the current directory")
+        log("\nError: no .osm.pbf files in current directory")
         log("Data download: https://download.geofabrik.de/asia/china.html\n")
         sys.exit(1)
     if len(pbf) == 1:
@@ -156,39 +156,39 @@ def resolve_input_file(user_input):
     log(f"\n  Detected {len(pbf)} .osm.pbf files:")
     for i, f in enumerate(pbf, 1):
         log(f"    {i}. {f}  ({os.path.getsize(f)/1048576:.1f} MB)")
-    log("\n  Please merge them first: osmium merge " + " ".join(pbf) + " -o merged.osm.pbf\n")
+    log("\n  Please merge first: osmium merge " + " ".join(pbf) + " -o merged.osm.pbf\n")
     sys.exit(0)
 
 
 # ═══════════════════════════════════════════
-#  Interactive Input
+#  Interactive input
 # ═══════════════════════════════════════════
 
 def prompt_zoom():
     log(f"\n  Zoom level range: {MIN_ZOOM} ~ {MAX_ZOOM}")
-    log(f"    6:  ~625km (Country panorama, coastlines + country borders)")
-    log(f"    8:  ~156km (City clusters, main road networks)")
-    log(f"    10: ~39km  (Urban areas, highways / national roads)")
-    log(f"    12: ~9.7km (Street level)")
-    log(f"    15: ~1.1km (Walking navigation)")
+    log(f"    6:  ~625km (country overview, coastline+borders)")
+    log(f"    8:  ~156km (city clusters, main road network)")
+    log(f"    10: ~39km  (urban area, motorways/trunk roads)")
+    log(f"    12: ~9.7km (street level)")
+    log(f"    15: ~1.1km (pedestrian navigation)")
     while True:
-        raw = input(f"  Start zoom ({MIN_ZOOM}-{MAX_ZOOM}, default {MIN_ZOOM}): ").strip()
+        raw = input(f"  Start level ({MIN_ZOOM}-{MAX_ZOOM}, default {MIN_ZOOM}): ").strip()
         if raw == "":
             z1 = MIN_ZOOM; break
         try:
             z1 = int(raw)
             if MIN_ZOOM <= z1 <= MAX_ZOOM: break
         except ValueError: pass
-        log(f"    Please enter a number between {MIN_ZOOM} and {MAX_ZOOM}")
+        log(f"    Please enter a number between {MIN_ZOOM}-{MAX_ZOOM}")
     while True:
-        raw = input(f"  End zoom ({z1}-{MAX_ZOOM}, default {z1}): ").strip()
+        raw = input(f"  End level ({z1}-{MAX_ZOOM}, default {z1}): ").strip()
         if raw == "":
             z2 = z1; break
         try:
             z2 = int(raw)
             if z1 <= z2 <= MAX_ZOOM: break
         except ValueError: pass
-        log(f"    Please enter a number between {z1} and {MAX_ZOOM}")
+        log(f"    Please enter a number between {z1}-{MAX_ZOOM}")
     return z1, z2
 
 
@@ -200,24 +200,24 @@ def prompt_quality():
             q = int(raw)
             if 1 <= q <= 100: return q
         except ValueError: pass
-        log("    Please enter a number between 1 and 100")
+        log("    Please enter a number between 1-100")
 
 
 def prompt_bbox():
-    raw = input("  Bounding box (leave blank for auto, format S,W,N,E): ").strip()
+    raw = input("  Bounding box (leave empty for automatic, format S,W,N,E): ").strip()
     if raw == "": return None
     try:
         p = tuple(map(float, raw.split(',')))
         if len(p) == 4: return p
     except ValueError: pass
-    log("    Invalid format, using auto range")
+    log("    Format error, using automatic range")
     return None
 
 
 def prompt_language():
     log()
     log("  Label language (place/road names):")
-    log("    Press Enter = Local language (name)")
+    log("    Enter = local language (name)")
     log("    en = English    zh = Chinese    ja = Japanese")
     raw = input("  Language code: ").strip().lower()
     if raw == "" or raw == "name":
@@ -226,7 +226,7 @@ def prompt_language():
 
 
 # ═══════════════════════════════════════════
-#  Storage Estimation
+#  Storage estimation
 # ═══════════════════════════════════════════
 
 def estimate_storage(bbox, z1, z2, quality):
@@ -269,7 +269,7 @@ def init_font():
                 return
             except Exception:
                 continue
-    _font_info = "PIL default (no CJK support)"
+    _font_info = "PIL default (no Chinese support)"
 
 
 def get_font(size):
@@ -285,7 +285,7 @@ def get_font(size):
 
 
 # ═══════════════════════════════════════════
-#  Coordinate Tools
+#  Coordinate tools
 # ═══════════════════════════════════════════
 
 def deg2px(lat, lon, z):
@@ -324,7 +324,7 @@ def compute_bbox(nids, nodes):
 
 
 # ═══════════════════════════════════════════
-#  Spatial Index
+#  Spatial index
 # ═══════════════════════════════════════════
 
 class SpatialIndex:
@@ -359,7 +359,7 @@ class SpatialIndex:
 
 
 # ═══════════════════════════════════════════
-#  OSM Data Collection
+#  OSM data collection
 # ═══════════════════════════════════════════
 
 class DataCollector(osmium.SimpleHandler):
@@ -371,7 +371,7 @@ class DataCollector(osmium.SimpleHandler):
         self.nodes = {}
         self.data_lat_min, self.data_lat_max = 90.0, -90.0
         self.data_lon_min, self.data_lon_max = 180.0, -180.0
-        # Existing data
+        # existing data
         self.roads = []
         self.buildings = []
         self.water_areas = []
@@ -379,7 +379,7 @@ class DataCollector(osmium.SimpleHandler):
         self.landuse = []
         self.lbl_road = []
         self.lbl_poi = []
-        # New data
+        # new data
         self.coastlines = []
         self.borders = []
         self.places = []
@@ -429,6 +429,10 @@ class DataCollector(osmium.SimpleHandler):
         t = dict(w.tags)
         name = self._get_name(t)
 
+        # Change 1: block power / man_made
+        if 'power' in t or 'man_made' in t:
+            return
+
         if 'highway' in t:
             hw = t['highway']
             if hw in ROAD_STYLES:
@@ -447,7 +451,8 @@ class DataCollector(osmium.SimpleHandler):
             self.water_areas.append((nids, bbox))
 
         elif 'waterway' in t:
-            self.water_lines.append((nids, bbox))
+            # Change 3: store waterway type
+            self.water_lines.append((nids, bbox, t['waterway']))
             if t['waterway'] == 'river' and name:
                 mid = nids[len(nids) // 2]
                 if mid in self.nodes:
@@ -455,16 +460,18 @@ class DataCollector(osmium.SimpleHandler):
                     self.lbl_river.append((la, lo, name))
 
         elif 'landuse' in t and t['landuse'] in LANDUSE_COLORS:
-            self.landuse.append((nids, bbox, LANDUSE_COLORS[t['landuse']]))
+            # Change 5: store landuse type
+            self.landuse.append((nids, bbox, LANDUSE_COLORS[t['landuse']], t['landuse']))
 
         elif 'leisure' in t and t['leisure'] in LEISURE_COLORS:
-            self.landuse.append((nids, bbox, LEISURE_COLORS[t['leisure']]))
+            # Change 5: store landuse type
+            self.landuse.append((nids, bbox, LEISURE_COLORS[t['leisure']], 'leisure_' + t['leisure']))
 
-        # Coastlines
+        # Coastlines (still collected, but not drawn in rendering)
         if 'natural' in t and t['natural'] == 'coastline':
             self.coastlines.append((nids, bbox))
 
-        # Administrative borders
+        # Administrative boundaries (still collected, but not drawn in rendering)
         if 'boundary' in t and t['boundary'] == 'administrative':
             al = t.get('admin_level', '')
             if al in ('2', '4'):
@@ -496,7 +503,7 @@ class DataCollector(osmium.SimpleHandler):
 
 
 # ═══════════════════════════════════════════
-#  Tile Content Tracking
+#  Tile content tracking
 # ═══════════════════════════════════════════
 
 def mark_tiles(content, feat_bbox, ox, oy, tw, th, z):
@@ -521,7 +528,7 @@ def mark_point_tile(content, gpx, gpy, ox, oy, tw, th):
 
 
 # ═══════════════════════════════════════════
-#  Road Line Width (adapted for low zoom)
+#  Road line widths (adapted for low zoom)
 # ═══════════════════════════════════════════
 
 def road_line_width(base_w, z):
@@ -532,7 +539,7 @@ def road_line_width(base_w, z):
 
 
 # ═══════════════════════════════════════════
-#  Chunked Rendering
+#  Chunked rendering
 # ═══════════════════════════════════════════
 
 def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
@@ -560,16 +567,18 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
                 pts.append((gpx - ox, gpy - oy))
         return pts
 
-    # ── 1. Landuse ──
+    # Land use
     for idx in data.idx['landuse'].query(cb):
-        nids, bb, color = data.landuse[idx]
+        # Change 6: unpack with lu_type, z<=7 show only forest
+        nids, bb, color, lu_type = data.landuse[idx]
         if not bbox_intersect(bb, cb): continue
+        if z <= 7 and lu_type != 'forest': continue
         pts = to_px(nids)
         if len(pts) >= 3:
             try: dr.polygon(pts, fill=color); mc(bb)
             except: pass
 
-    # ── 2. Water areas ──
+    # Water areas
     for idx in data.idx['water_areas'].query(cb):
         nids, bb = data.water_areas[idx]
         if not bbox_intersect(bb, cb): continue
@@ -578,50 +587,23 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
             try: dr.polygon(pts, fill=WATER); mc(bb)
             except: pass
 
-    # ── 3. Water lines (rivers) ──
+    # Waterway lines (rivers)
     w_river = max(1, 2 if z < 10 else (z - 8))
     for idx in data.idx['water_lines'].query(cb):
-        nids, bb = data.water_lines[idx]
+        # Change 4: unpack with wk, filter waterway types by zoom
+        nids, bb, wk = data.water_lines[idx]
         if not bbox_intersect(bb, cb): continue
+        if z <= 7 and wk != 'river': continue
+        if z <= 10 and wk not in ('river', 'canal'): continue
         pts = to_px(nids)
         if len(pts) >= 2:
             try: dr.line(pts, fill=WATER_LN, width=w_river); mc(bb)
             except: pass
 
-    # ── 4. Coastlines ──
-    cw_coast = 3 if z <= 7 else (2 if z <= 10 else 1)
-    for idx in data.idx['coastlines'].query(cb):
-        nids, bb = data.coastlines[idx]
-        if not bbox_intersect(bb, cb): continue
-        pts = to_px(nids)
-        if len(pts) >= 2:
-            try: dr.line(pts, fill=COASTLINE_COLOR, width=cw_coast); mc(bb)
-            except: pass
+    # Coastlines no longer rendered
+    # Country/province borders no longer rendered
 
-    # ── 5. Country borders ──
-    bw_country = 3 if z <= 7 else (2 if z <= 10 else 1)
-    for idx in data.idx['borders'].query(cb):
-        nids, bb, level = data.borders[idx]
-        if level != 2: continue
-        if not bbox_intersect(bb, cb): continue
-        pts = to_px(nids)
-        if len(pts) >= 2:
-            try: dr.line(pts, fill=BORDER_COUNTRY_CLR, width=bw_country); mc(bb)
-            except: pass
-
-    # ── 6. Province/State borders ──
-    bw_prov = 2 if z <= 8 else 1
-    if z >= 7:
-        for idx in data.idx['borders'].query(cb):
-            nids, bb, level = data.borders[idx]
-            if level != 4: continue
-            if not bbox_intersect(bb, cb): continue
-            pts = to_px(nids)
-            if len(pts) >= 2:
-                try: dr.line(pts, fill=BORDER_PROVINCE_CLR, width=bw_prov); mc(bb)
-                except: pass
-
-    # ── 7. Roads ──
+    # Roads
     road_hits = data.idx['roads'].query(cb)
     by_type = defaultdict(list)
     for idx in road_hits:
@@ -641,8 +623,8 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
                     except: pass
                 if drew: mc(bb)
 
-    # ── 8. Buildings (z>=15) ──
-    if z >= 15:
+    # Buildings: changed from z>=15 to z>=13
+    if z >= 13:
         for idx in data.idx['buildings'].query(cb):
             nids, bb = data.buildings[idx]
             if not bbox_intersect(bb, cb): continue
@@ -651,7 +633,7 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
                 try: dr.polygon(pts, fill=BLD_FILL, outline=BLD_EDGE); mc(bb)
                 except: pass
 
-    # ── 9. Place labels (place nodes) ──
+    # Place labels (place nodes)
     for idx in data.idx['places'].query(cb):
         la, lo, name, pt = data.places[idx]
         zmin = PLACE_ZOOM.get(pt, 14)
@@ -668,7 +650,7 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
             dr.text((x + r + 3, y - fs // 2), name, fill=PLACE_TEXT_CLR, font=font)
             mark_point_tile(content, gpx, gpy, ox, oy, tw, th)
 
-    # ── 10. River names (z>=10) ──
+    # River names (z>=10)
     if z >= 10:
         font = get_font(max(8, z - 6))
         for idx in data.idx['lbl_river'].query(cb):
@@ -679,7 +661,7 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
                 dr.text((x + 2, y - 7), name, fill=RIVER_LABEL_CLR, font=font)
                 mark_point_tile(content, gpx, gpy, ox, oy, tw, th)
 
-    # ── 11. Road names (z>=15) ──
+    # Road names (z>=15)
     if z >= 15:
         font = get_font(max(9, 8 + (z - 15)))
         for idx in data.idx['lbl_road'].query(cb):
@@ -690,7 +672,7 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
                 dr.text((x + 2, y - 7), txt, fill='#555555', font=font)
                 mark_point_tile(content, gpx, gpy, ox, oy, tw, th)
 
-    # ── 12. POI names (z>=16) ──
+    # POI names (z>=16)
     if z >= 16:
         font = get_font(max(9, 8 + (z - 15)))
         for idx in data.idx['lbl_poi'].query(cb):
@@ -701,7 +683,7 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
                 dr.text((x + 2, y - 7), txt, fill='#333333', font=font)
                 mark_point_tile(content, gpx, gpy, ox, oy, tw, th)
 
-    # ── Save tiles with content ──
+    # Save tiles that have content
     saved, skipped = 0, 0
     for tx_off in range(tw):
         for ty_off in range(th):
@@ -725,16 +707,16 @@ def render_chunk(data, tx0, ty0, tw, th, z, out_dir, quality):
 
 
 # ═══════════════════════════════════════════
-#  Main Entry
+#  Main entry point
 # ═══════════════════════════════════════════
 
 def main():
     ap = argparse.ArgumentParser(
-        description='OSM PBF → JPEG Tiles (z6-z18)')
+        description='OSM PBF → JPEG tiles (z6-z18)')
     ap.add_argument('input', nargs='?', default=None)
     ap.add_argument('-o', '--output', default=DEFAULT_OUTPUT)
     ap.add_argument('-z', '--zoom', default=None,
-                    help='Zoom levels (e.g., 6-14, interactive if not specified)')
+                    help='Zoom levels (e.g. 6-14, interactive if omitted)')
     ap.add_argument('-b', '--bbox', help='S,W,N,E')
     ap.add_argument('-q', '--quality', type=int, default=None)
     ap.add_argument('-l', '--lang', default=None,
@@ -743,7 +725,7 @@ def main():
 
     log("\n" + "=" * 55)
     log("  OSM Offline Tile Generator")
-    log("  Chunked Rendering + Spatial Indexing + Multilingual + Low Zoom Coastlines")
+    log("  Chunked rendering + spatial index + multi-language + low zoom coastline")
     log("=" * 55)
 
     # Input file
@@ -761,7 +743,7 @@ def main():
         parts = args.zoom.split('-')
         z1, z2 = int(parts[0]), int(parts[-1])
     else:
-        log("\n  Zoom levels not specified, entering interactive mode...")
+        log("\n  No zoom level specified, entering interactive mode...")
         z1, z2 = prompt_zoom()
 
     # JPEG quality
@@ -781,7 +763,7 @@ def main():
     elif interactive:
         name_tag = prompt_language()
 
-    # Fonts
+    # Font
     init_font()
 
     # Parameter summary
@@ -790,39 +772,39 @@ def main():
     log(f"  Output:  {os.path.abspath(out_dir)}/")
     log(f"  Zoom:    z{z1} ~ z{z2}")
     log(f"  Quality: {quality}")
-    log(f"  Language:{lang_display}")
+    log(f"  Language: {lang_display}")
     log(f"  Font:    {_font_info}")
     if bbox:
-        log(f"  BBox:    S={bbox[0]} W={bbox[1]} N={bbox[2]} E={bbox[3]}")
+        log(f"  Bbox:    S={bbox[0]} W={bbox[1]} N={bbox[2]} E={bbox[3]}")
     else:
-        log(f"  BBox:    Auto (data bounds)")
+        log(f"  Bbox:    Auto (data bounds)")
     est_t, est_mb = estimate_storage(bbox, z1, z2, quality)
-    log(f"  Estimate:~{est_t:,} tiles, ~{est_mb:,} MB")
+    log(f"  Est.:    ~{est_t:,} tiles, ~{est_mb:,} MB")
 
-    # Phase 1: Reading
+    # Phase 1: Read
     log(f"\n[1/3] Reading {input_file}")
     t0 = time.time()
     dc = DataCollector(bbox, name_tag)
     dc.apply_file(input_file, locations=True)
     dt = time.time() - t0
-    log(f"  Took {dt:.1f}s")
+    log(f"  Elapsed {dt:.1f}s")
     log(f"  Nodes {len(dc.nodes):,}  Roads {len(dc.roads):,}  "
         f"Buildings {len(dc.buildings):,}  Water {len(dc.water_areas)+len(dc.water_lines):,}")
     log(f"  Coastlines {len(dc.coastlines):,}  Borders {len(dc.borders):,}  "
-        f"Places {len(dc.places):,}  Rivers {len(dc.lbl_river):,}")
+        f"Places {len(dc.places):,}  River names {len(dc.lbl_river):,}")
 
     if not dc.nodes:
-        log("Error: No data"); sys.exit(1)
+        log("Error: no data"); sys.exit(1)
 
-    # Phase 2: Spatial Index
+    # Phase 2: Build spatial index
     log(f"\n[2/3] Building spatial index")
     t0 = time.time()
     dc.build_indices()
     dt = time.time() - t0
     idx_cells = sum(len(v.cells) for v in dc.idx.values())
-    log(f"  Took {dt:.1f}s  ({idx_cells:,} grid cells)")
+    log(f"  Elapsed {dt:.1f}s  ({idx_cells:,} grid cells)")
 
-    # Phase 3: Rendering
+    # Phase 3: Render
     log(f"\n[3/3] Rendering zoom {z1}~{z2}  (chunk {CHUNK}x{CHUNK})")
     grand_saved = grand_skipped = 0
     t_render = time.time()
@@ -882,7 +864,7 @@ def main():
     log(f"  Done!")
     log(f"  Saved: {grand_saved:,} tiles")
     log(f"  Skipped: {grand_skipped:,} (blank)")
-    log(f"  Time: {total_elapsed:.1f}s  ({avg:,.0f} tiles/s)")
+    log(f"  Elapsed: {total_elapsed:.1f}s  ({avg:,.0f} tiles/s)")
     log(f"  Output: {os.path.abspath(out_dir)}/")
     log(f"{'=' * 55}\n")
 
