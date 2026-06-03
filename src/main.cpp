@@ -6,15 +6,15 @@
  * SD:    CS=12, MOSI=14, CLK=40, MISO=39
  *
  * Keys:
- *   Tab      Switch between GPS info / Map
- *   ; . , /  Map pan (long press continuous)
- *   z / x    Map zoom out / zoom in (only on press)
- *   `        Return to GPS position
- *   Enter    Screenshot save to SD
+ *   Tab      switch GPS info / map
+ *   ; . , /  map pan (long press continuous)
+ *   z / x    map zoom out / in (on press only)
+ *   `        return to GPS position
+ *   Enter    save screenshot to SD
  *
  * SD card structure:
  *   /gpsmap/
- *   ├── ini/gpsmap.ini
+ *   ├── gpsmap.ini
  *   ├── screenshot/shot_NNNN.bmp
  *   └── {z}/{x}/{y}.jpg
  */
@@ -45,7 +45,7 @@
 // ═══════════════════════════════════════════
 
 #define PATH_BASE     "/gpsmap"
-#define PATH_INI      "/gpsmap/ini/gpsmap.ini"
+#define PATH_INI      "/gpsmap/gpsmap.ini"
 #define PATH_SHOT_DIR "/gpsmap/screenshot"
 
 // ═══════════════════════════════════════════
@@ -53,7 +53,7 @@
 // ═══════════════════════════════════════════
 
 #define TILE_PX       256
-#define ZOOM_MIN      12
+#define ZOOM_MIN      6
 #define ZOOM_MAX      18
 #define ZOOM_DEFAULT  15
 #define MAX_JPEG_BUF  36864
@@ -64,8 +64,11 @@
 #define SAVE_INTERVAL 60000
 #define HDR_H         12
 
+// Background color RGB565 (#f2efe9)
+#define BG_COLOR 0xF77C
+
 // ═══════════════════════════════════════════
-//  Screen Enum
+//  Screen enum
 // ═══════════════════════════════════════════
 
 enum ScreenID { SCR_GPS_INFO = 0, SCR_MAP, SCR_COUNT };
@@ -73,7 +76,7 @@ ScreenID currentScreen = SCR_GPS_INFO;
 bool     autoSwitched  = false;
 
 // ═══════════════════════════════════════════
-//  Constellation Data (NMEA parsing)
+//  Constellation data (NMEA parsing)
 // ═══════════════════════════════════════════
 
 #define NUM_CONST 4
@@ -100,7 +103,7 @@ int    ggaFixQuality = 0;
 String nmeaLineBuf   = "";
 
 // ═══════════════════════════════════════════
-//  Global State
+//  Global state
 // ═══════════════════════════════════════════
 
 TinyGPSPlus     gps;
@@ -154,7 +157,7 @@ void initGPS() {
 }
 
 // ═══════════════════════════════════════════
-//  Position Save / Load
+//  Position save / load
 // ═══════════════════════════════════════════
 
 void saveLastPosition() {
@@ -189,7 +192,7 @@ bool loadLastPosition() {
 }
 
 // ═══════════════════════════════════════════
-//  Screenshot Counter Initialization
+//  Screenshot counter
 // ═══════════════════════════════════════════
 
 void initScreenshotCounter() {
@@ -206,11 +209,8 @@ void initScreenshotCounter() {
         if (!entry) break;
         String name = entry.name();
         entry.close();
-
-        // Extract pure filename (compatible with SD library versions that return full path)
         int lastSlash = name.lastIndexOf('/');
         if (lastSlash >= 0) name = name.substring(lastSlash + 1);
-
         if (name.startsWith("shot_") && name.endsWith(".bmp")) {
             String numStr = name.substring(5, name.length() - 4);
             int num = numStr.toInt();
@@ -222,7 +222,7 @@ void initScreenshotCounter() {
 }
 
 // ═══════════════════════════════════════════
-//  Coordinate Conversion
+//  Coordinate conversion
 // ═══════════════════════════════════════════
 
 static inline double deg2rad(double d) {
@@ -242,7 +242,7 @@ void toPixel(double la, double lo, int z, double &px, double &py) {
 }
 
 // ═══════════════════════════════════════════
-//  NMEA Parsing
+//  NMEA parsing
 // ═══════════════════════════════════════════
 
 String getNmeaField(const String& line, int num) {
@@ -304,7 +304,7 @@ void parseNmeaLine(const String& line) {
 }
 
 // ═══════════════════════════════════════════
-//  Timezone & DST
+//  Time zone & DST
 // ═══════════════════════════════════════════
 
 static int calcDow(int y, int m, int d) {
@@ -327,7 +327,6 @@ static int lastWday(int y, int m, int wday) {
 }
 
 static int getDST(int y, int mon, int d, int utcH, float lat, float lon) {
-    // North America
     if (lat > 24 && lat < 72 && lon > -140 && lon < -50) {
         if (lat < 23 && lon < -154) return 0;
         if (lat > 31 && lat < 37.5f && lon > -115 && lon < -109) return 0;
@@ -342,7 +341,6 @@ static int getDST(int y, int mon, int d, int utcH, float lat, float lon) {
         if (mon == 11) return (ld < eD || (ld == eD && lh < 1)) ? 1 : 0;
         return 0;
     }
-    // Europe
     if (lat > 34 && lat < 72 && lon > -12 && lon < 45) {
         int sD = lastWday(y, 3, 0), eD = lastWday(y, 10, 0);
         if (mon > 3 && mon < 10) return 1;
@@ -351,7 +349,6 @@ static int getDST(int y, int mon, int d, int utcH, float lat, float lon) {
         if (mon == 10) return (d < eD || (d == eD && utcH < 1)) ? 1 : 0;
         return 0;
     }
-    // Southern Australia
     if (lat < -28 && lon > 138 && lon < 155) {
         int sD = nthWday(y, 10, 0, 1), eD = nthWday(y, 4, 0, 1);
         int lh = utcH + 10, ld = d;
@@ -362,7 +359,6 @@ static int getDST(int y, int mon, int d, int utcH, float lat, float lon) {
         if (mon == 4)  return (ld < eD || (ld == eD && lh < 2)) ? 1 : 0;
         return 0;
     }
-    // New Zealand
     if (lat < -34 && lon > 165) {
         int sD = lastWday(y, 9, 0), eD = nthWday(y, 4, 0, 1);
         int lh = utcH + 12, ld = d;
@@ -440,7 +436,7 @@ int getTotalSatellites() {
 }
 
 // ═══════════════════════════════════════════
-//  JPEG Decoding (Byte order correction)
+//  JPEG decode (byte order fix)
 // ═══════════════════════════════════════════
 
 int jpegDrawCB(JPEGDRAW *p) {
@@ -461,7 +457,7 @@ int jpegDrawCB(JPEGDRAW *p) {
 }
 
 // ═══════════════════════════════════════════
-//  Tile Loading
+//  Tile loading
 // ═══════════════════════════════════════════
 
 bool drawTile(int tx, int ty, int z, int sx, int sy) {
@@ -537,14 +533,14 @@ bool saveScreenshot() {
 }
 
 // ═══════════════════════════════════════════
-//  GPS Info Page
+//  GPS info page
 // ═══════════════════════════════════════════
 
 void drawScreenGpsInfo() {
     char buf[48];
     int y = 2;
 
-    // Time
+    // ── Time ──
     LocalTime lt = getLocalTime();
     if (lt.valid) {
         cv->setTextSize(2);
@@ -579,7 +575,7 @@ void drawScreenGpsInfo() {
         y += 12;
     }
 
-    // Position Info
+    // ── Position info ──
     cv->setTextSize(1);
     const char* fq = "---";
     if      (ggaFixQuality == 1) fq = "GPS";
@@ -600,7 +596,7 @@ void drawScreenGpsInfo() {
     cv->drawLine(4, y, scrW - 4, y, TFT_DARKGREY);
     y += 4;
 
-    // Constellation bars
+    // ── Constellation bars ──
     int maxVis = 1;
     for (int i = 0; i < NUM_CONST; i++)
         if (constInfo[i].visible > maxVis) maxVis = constInfo[i].visible;
@@ -638,7 +634,7 @@ void drawScreenGpsInfo() {
     cv->drawLine(4, y, scrW - 4, y, TFT_DARKGREY);
     y += 4;
 
-    // Coordinates & Speed
+    // ── Coordinates & speed ──
     if (gpsFix || gps.location.isValid()) {
         cv->setTextSize(1);
         cv->setTextColor(TFT_GREEN, TFT_BLACK);
@@ -663,10 +659,11 @@ void drawScreenGpsInfo() {
 }
 
 // ═══════════════════════════════════════════
-//  Map Page
+//  Map page
 // ═══════════════════════════════════════════
 
 void drawScreenMap() {
+    // No position
     if (!gpsFix && !hasLastPos && !panning) {
         cv->setTextColor(TFT_WHITE, TFT_BLACK);
         cv->setTextSize(1);
@@ -676,6 +673,7 @@ void drawScreenMap() {
         return;
     }
 
+    // ── Tile rendering ──
     int tx, ty;
     toTile(curLat, curLon, curZoom, tx, ty);
     double gpx, gpy;
@@ -692,17 +690,18 @@ void drawScreenMap() {
             if (sx + TILE_PX < 0 || sx > scrW) continue;
             if (sy + TILE_PX < 0 || sy > scrH) continue;
             if (!drawTile(tx + dx, ty + dy, curZoom, sx, sy)) {
+                // Missing tile: fill with background color (not gray)
                 int rx = (sx > 0) ? sx : 0;
                 int ry = (sy > 0) ? sy : 0;
                 int rw = min((int)TILE_PX, scrW - rx);
                 int rh = min((int)TILE_PX, scrH - ry);
                 if (rw > 0 && rh > 0)
-                    cv->fillRect(rx, ry, rw, rh, 0x2104);
+                    cv->fillRect(rx, ry, rw, rh, BG_COLOR);
             }
         }
     }
 
-    // Position cursor
+    // ── Position cursor ──
     int mx = scrW / 2 - panX;
     int my = scrH / 2 - panY;
     if (0 <= mx && mx < scrW && 0 <= my && my < scrH) {
@@ -710,7 +709,7 @@ void drawScreenMap() {
         cv->fillCircle(mx, my, 2, TFT_RED);
     }
 
-    // Top bar
+    // ── Top bar ──
     cv->fillRect(0, 0, scrW, HDR_H, 0x0000);
     cv->setTextSize(1);
 
@@ -748,7 +747,7 @@ void drawScreenMap() {
 }
 
 // ═══════════════════════════════════════════
-//  Screen Scheduling
+//  Screen dispatch
 // ═══════════════════════════════════════════
 
 void updateScreen(bool force = false) {
@@ -787,7 +786,7 @@ void updateScreen(bool force = false) {
 }
 
 // ═══════════════════════════════════════════
-//  GPS Reading
+//  GPS reading
 // ═══════════════════════════════════════════
 
 void readGPS() {
@@ -838,10 +837,9 @@ void readGPS() {
 void handleInput() {
     M5Cardputer.update();
 
-    // Zoom keys: rising edge detection
+    // Zoom: rising edge detection
     bool curZ = M5Cardputer.Keyboard.isKeyPressed('z');
     bool curX = M5Cardputer.Keyboard.isKeyPressed('x');
-
     if (curZ && !lastZState) {
         if (curZoom > ZOOM_MIN) { curZoom--; dirty = true; }
     }
@@ -856,7 +854,7 @@ void handleInput() {
             Keyboard_Class::KeysState status =
                 M5Cardputer.Keyboard.keysState();
 
-            // Tab: Switch
+            // Tab: switch screen
             if (status.tab) {
                 currentScreen = (ScreenID)((currentScreen + 1) % SCR_COUNT);
                 dirUp = dirDown = dirLeft = dirRight = false;
@@ -866,7 +864,7 @@ void handleInput() {
                 return;
             }
 
-            // Enter: Screenshot
+            // Enter: screenshot
             if (status.enter) {
                 if (saveScreenshot()) {
                     showSavedMsg = true;
