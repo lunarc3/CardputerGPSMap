@@ -1,27 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-osm2tiles.py — OSM PBF → tile image conversion (OSM Carto standard colours)
+osm2tiles.py — OSM PBF → Tile Conversion (OSM Carto Standard Colors)
 
 Features:
-  1. power=* / man_made=* are not rendered at any zoom level.
-  2. Road, waterway, and railway widths scale with zoom.
-  3. z6-7 simplified: only motorway+trunk+river+water areas+forest areas.
-  4. From z8 onwards progressively more detail.
-  5. z11/z12 icons: hospital red cross, school/university building,
-     railway station train, airport airplane.
-  6. Name deduplication within each tile.
-  7. Chunk-based bbox binary scan + numpy node storage.
-  8. z6-7 only motorway+trunk; z8-11 only motorway+trunk+primary.
-  9. Administrative boundaries removed.
-  10. z6-10 waterways only river+canal; stream deferred to z11.
-  11. Text size depends on zoom+place level + 1px white outline.
-  12. z6: province names 14px (admin_level=4) + prefecture city dots (admin_level=5).
-  13. z7: prefecture city names 14px (admin_centre level=5, fallback level=4).
-  14. z8-12: admin_centres level=5 (prefecture) + level=6 (county).
-  15. z13+: place_nodes + admin_centres level=6 supplement.
-  16. Large file staged rendering: z6-8 / z9-12 tag-filtered nodes,
-      z13-14 geographical splitting.
+  1. power=* / man_made=* not rendered at any zoom level
+  2. Road/waterway/railway widths scaled by zoom level
+  3. z6-7 simplified: motorway+trunk+river+water bodies+forest areas only
+  4. z8 onwards: features progressively enabled
+  5. z11/z12 icons: hospital red cross, school/university building, railway station train, airport airplane
+  6. Name deduplication within each tile
+  7. Block-level bbox binary scanning + numpy node storage
+  8. z6-7 motorway+trunk only; z8-11 motorway+trunk+primary only
+  9. Administrative boundaries removed
+  10. z6-10 waterways: river+canal only; stream deferred to z11
+  11. Text sized by zoom+place level + 1px white stroke
+  12. z6: Province names 14px (admin_level=4) + prefecture-level city dots (admin_level=5)
+  13. z7: Prefecture-level city names 14px (admin_centre level=5, fallback level=4)
+  14. z8-12: admin_centres level=5 (prefecture) + level=6 (county)
+  15. z13+: place_nodes + admin_centres level=6 supplement
+  16. Large file staged rendering: z6-8 / z9-12 label-filtered nodes, z13-14 geographic splitting
 """
 
 import os
@@ -40,7 +38,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 # ════════════════════════════════════════════════════════════════
-# §1  Protobuf auto-setup
+# §1  Protobuf Auto-Setup
 # ════════════════════════════════════════════════════════════════
 
 def _setup_protobuf():
@@ -183,7 +181,7 @@ message ChangeSet { optional int64 id = 1; }
         print("Please run: pip install protobuf grpcio-tools")
         sys.exit(1)
     import fileformat_pb2 as _ff, osmformat_pb2 as _of
-    print("protobuf module auto-generated!", flush=True)
+    print("protobuf module auto-generated successfully!", flush=True)
     return _ff, _of
 
 
@@ -191,7 +189,7 @@ fileformat, osmpbf = _setup_protobuf()
 
 
 # ════════════════════════════════════════════════════════════════
-# §2  Constants and styles
+# §2  Constants & Styles
 # ════════════════════════════════════════════════════════════════
 
 BG_COLOR = (242, 239, 233)
@@ -416,7 +414,7 @@ def is_poi(tags):
 
 
 # ════════════════════════════════════════════════════════════════
-# §3  Zoom level filtering
+# §3  Zoom Level Filtering
 # ════════════════════════════════════════════════════════════════
 
 def _is_blocked(tags):
@@ -559,7 +557,7 @@ def _douglas_peucker(points, epsilon):
     return [points[i] for i in range(n) if keep[i]]
 
 
-# §3.1  Text font size + white outline
+# §3.1  Text font size + white stroke
 # ════════════════════════════════════════════════════════════════
 
 def _label_font_size(tags, zoom):
@@ -649,7 +647,7 @@ def _draw_small_icon(draw, cx, cy, filled, outline, fill_color):
 
 
 # ════════════════════════════════════════════════════════════════
-# §3.3  Administrative centre extraction (admin_centre, authoritative data)
+# §3.3  Admin centre extraction (admin_centre, authoritative data)
 # ════════════════════════════════════════════════════════════════
 
 def build_admin_centres(relations):
@@ -766,7 +764,7 @@ class CompactNodeStore:
 
 
 # ════════════════════════════════════════════════════════════════
-# §5  OSM PBF parser
+# §5  OSM PBF Parser
 # ════════════════════════════════════════════════════════════════
 
 _PLACE_TYPES = frozenset(("city", "town", "village", "suburb"))
@@ -794,9 +792,14 @@ class OSMParser:
     def _should_store(self, nid, lat, lon, tags, nif):
         ib = self._in_bbox(lat, lon)
         if nif is not None:
+            if isinstance(nif, np.ndarray):
+                idx = int(np.searchsorted(nif, nid))
+                in_f = idx < len(nif) and nif[idx] == nid
+            else:
+                in_f = nid in nif
             if self.strict_filter:
-                return (nid in nif) and ib
-            return (nid in nif) or (ib and bool(tags))
+                return in_f and ib
+            return in_f or (ib and bool(tags))
         if self.bbox is not None and not ib: return False
         if not tags: return True
         return self.node_filter(tags)
@@ -926,7 +929,7 @@ class OSMParser:
                           f"{now - t0:.0f}s", end="", flush=True)
                     tp = now
         if nodes is not None: nodes.finalize()
-        print(f"\nParse complete: nodes {nc:,}, ways {len(ways):,}, "
+        print(f"\nParsing complete: nodes {nc:,}, ways {len(ways):,}, "
               f"relations {len(relations):,}, place nodes {len(self.place_nodes):,}, "
               f"skipped {skipped} blocks, elapsed {time.time() - t0:.1f}s", flush=True)
         return nodes, ways, relations
@@ -957,17 +960,55 @@ class OSMParser:
                 ki = None
         if cur or ki is not None: tl.append(cur)
         while len(tl) < len(ids): tl.append({})
-        stored = 0
-        for j in range(len(ids)):
-            tags = tl[j]
-            p = tags.get("place")
-            if p in _PLACE_TYPES:
-                nm = tags.get("name", "")
-                if nm:
-                    self.place_nodes[ids[j]] = (nm, p)
-            if self._should_store(ids[j], lats[j], lons[j], tags, nif):
-                nodes.add(ids[j], lats[j], lons[j]); stored += 1
-        return stored
+
+        # numpy batch filtering
+        if isinstance(nif, np.ndarray) and len(nif) > 0:
+            ids_arr = np.array(ids, dtype=np.int64)
+            nif_idx = np.searchsorted(nif, ids_arr)
+            nif_idx = np.clip(nif_idx, 0, len(nif) - 1)
+            in_nif = nif[nif_idx] == ids_arr
+
+            if self.bbox is not None:
+                lats_a = np.array(lats, dtype=np.float64)
+                lons_a = np.array(lons, dtype=np.float64)
+                bs, bw, bn, be = self.bbox
+                in_bbox = ((lats_a >= bs - 0.02) & (lats_a <= bn + 0.02)
+                           & (lons_a >= bw - 0.02) & (lons_a <= be + 0.02))
+            else:
+                in_bbox = None
+
+            if self.strict_filter:
+                store_mask = in_nif & in_bbox if in_bbox is not None else in_nif
+            else:
+                has_tags = np.array([bool(t) for t in tl], dtype=bool)
+                if in_bbox is not None:
+                    store_mask = in_nif | (in_bbox & has_tags)
+                else:
+                    store_mask = in_nif | has_tags
+
+            stored = 0
+            for j in range(len(ids)):
+                tags = tl[j]
+                p = tags.get("place")
+                if p in _PLACE_TYPES:
+                    nm = tags.get("name", "")
+                    if nm:
+                        self.place_nodes[ids[j]] = (nm, p)
+                if store_mask[j]:
+                    nodes.add(ids[j], lats[j], lons[j]); stored += 1
+            return stored
+        else:
+            stored = 0
+            for j in range(len(ids)):
+                tags = tl[j]
+                p = tags.get("place")
+                if p in _PLACE_TYPES:
+                    nm = tags.get("name", "")
+                    if nm:
+                        self.place_nodes[ids[j]] = (nm, p)
+                if self._should_store(ids[j], lats[j], lons[j], tags, nif):
+                    nodes.add(ids[j], lats[j], lons[j]); stored += 1
+            return stored
 
     def _node(self, nd, pb, st, nodes, nif):
         tags = {}
@@ -1033,7 +1074,7 @@ class OSMParser:
 
 
 # ════════════════════════════════════════════════════════════════
-# §6  Font loading
+# §6  Font Loading
 # ════════════════════════════════════════════════════════════════
 
 _fc: Dict[int, ImageFont.FreeTypeFont] = {}
@@ -1066,7 +1107,7 @@ def _font(size):
 
 
 # ════════════════════════════════════════════════════════════════
-# §7  render_region (z8-12 unified with admin_centres)
+# §7  render_region (z8-12 unified admin_centres)
 # ════════════════════════════════════════════════════════════════
 
 def deg2tile(lon, lat, z):
@@ -1107,11 +1148,11 @@ def render_region(nodes, ways, relations, zoom=14,
     cands = wn | set(place_nodes.keys()) | set(admin_centres.keys())
     del wn
     fnids = nodes.filter_ids(cands); del cands
-    print(f"  Filtered: {len(fnids):,}  ({time.time() - t0:.1f}s)", flush=True)
-    if not fnids: print("No nodes", flush=True); return
+    print(f"  After filtering: {len(fnids):,}  ({time.time() - t0:.1f}s)", flush=True)
+    if not fnids: print("No nodes found", flush=True); return
 
     f_ids, f_lats, f_lons = nodes.get_coords_batch(fnids)
-    if len(f_ids) == 0: print("No nodes", flush=True); return
+    if len(f_ids) == 0: print("No nodes found", flush=True); return
 
     lo0, lo1 = float(f_lons.min()), float(f_lons.max())
     la0, la1 = float(f_lats.min()), float(f_lats.max())
@@ -1137,8 +1178,8 @@ def render_region(nodes, ways, relations, zoom=14,
     ty = np.floor(fpy / tile_size).astype(np.int32)
     occ = set(zip(tx.tolist(), ty.tolist()))
     os.makedirs(output_dir, exist_ok=True)
-    print(f"Canvas: {cw}x{ch}, tiles: {ntx}x{nty}={ntx * nty}, "
-          f"occupied: {len(occ)}, global origin: ({global_tx0},{global_ty0})",
+    print(f"Canvas: {cw}x{ch}, Tiles: {ntx}x{nty}={ntx * nty}, "
+          f"With data: {len(occ)}, Global origin: ({global_tx0},{global_ty0})",
           flush=True)
 
     print("Building node-to-way index...", flush=True)
@@ -1406,7 +1447,7 @@ def render_region(nodes, ways, relations, zoom=14,
                 spd = rendered / (now - t0) if now > t0 else 0
                 rem = (len(occ) - rendered) / spd if spd > 0 else 0
                 print(f"\r  {rendered}/{len(occ)}  "
-                      f"{spd:.1f} tiles/s  remaining {rem:.0f}s ",
+                      f"{spd:.1f} tiles/sec  remaining {rem:.0f}s ",
                       end="", flush=True)
                 tp = now
 
@@ -1416,7 +1457,7 @@ def render_region(nodes, ways, relations, zoom=14,
 
 
 # ════════════════════════════════════════════════════════════════
-# §8  Staged rendering + main program
+# §8  Staged Rendering + Main Program
 # ════════════════════════════════════════════════════════════════
 
 def _osmium_extract(input_file, bbox, output_file):
@@ -1433,7 +1474,7 @@ def _osmium_extract(input_file, bbox, output_file):
 
 
 def _get_pbf_header_bbox(filepath):
-    """Get geographic bounding box from PBF header (south, west, north, east)"""
+    """Get geographic bounding box from PBF file header (south, west, north, east)"""
     try:
         with open(filepath, 'rb') as f:
             data, btype = OSMParser._read_blob(f)
@@ -1452,9 +1493,9 @@ def _get_pbf_header_bbox(filepath):
 
 def _split_bbox(bbox, buf_deg=0.3, target_chunk_deg=15):
     """Adaptively split bbox:
-    - Small range (<10 deg) not split
-    - Medium/large range split into nx/ny chunks based on target_chunk_deg
-    Returns [(south, west, north, east), ...], each with buf overlap
+    - Small extent (<10 degrees): no splitting
+    - Medium/large extent: dynamically compute nx/ny based on target_chunk_deg
+    Returns [(south, west, north, east), ...] list, each chunk with buf overlap
     """
     s, w, n, e = bbox
     width = e - w
@@ -1492,15 +1533,16 @@ def _split_bbox(bbox, buf_deg=0.3, target_chunk_deg=15):
     return chunks
 
 
+
 def _collect_needed_ids(filepath, max_zoom, bbox=None):
-    """First pass: collect set of node IDs needed within specified max_zoom range"""
+    """First pass scan: collect node ID set needed within the specified max_zoom range"""
     def way_filter(tags):
         return _way_zoom_ok(tags, max_zoom)
 
     scanner = OSMParser(way_filter=way_filter, bbox=bbox)
     _, ways, relations = scanner.parse(filepath, ways_only=True)
 
-    # Node references from ways
+    # Nodes referenced by ways
     way_ids = set()
     skipped_small = 0
     for _, tags, nids in ways:
@@ -1524,15 +1566,20 @@ def _collect_needed_ids(filepath, max_zoom, bbox=None):
                         ac_ids.add(m["ref"])
 
     needed = way_ids | ac_ids
-    print(f"  way nodes: {len(way_ids):,}, admin centres: {len(ac_ids):,}, "
+    print(f"  Way nodes: {len(way_ids):,}, admin centres: {len(ac_ids):,}, "
           f"total: {len(needed):,}", flush=True)
-    del way_ids, ac_ids, ways, relations
-    return needed
+    del way_ids, ac_ids
+    needed_arr = np.fromiter(needed, dtype=np.int64)
+    needed_arr.sort()
+    print(f"  numpy: {needed_arr.nbytes / 1024 / 1024:.0f} MB "
+          f"(set approx. {len(needed) * 40 // 1024 // 1024} MB)", flush=True)
+    del needed, ways, relations
+    return needed_arr
 
 
 def _process_stage_two_pass(filepath, zooms, max_zoom, output_dir, args,
                              bbox=None, stage_label=""):
-    """Two-pass mode stage: scan → load (filtered) → render → release"""
+    """Two-pass stage: scan → load (filtered) → render → release"""
     print(f"\n{'=' * 60}", flush=True)
     print(f"  Stage [{stage_label}]  (two-pass mode)", flush=True)
     print(f"  zoom: {', '.join(str(z) for z in zooms)}, max_zoom={max_zoom}",
@@ -1542,13 +1589,13 @@ def _process_stage_two_pass(filepath, zooms, max_zoom, output_dir, args,
               f"N={bbox[2]:.2f} E={bbox[3]:.2f}", flush=True)
     print(f"{'=' * 60}", flush=True)
 
-    # First pass: scan
+    # ── First pass: scan ──
     print(f"\n--- First pass: scanning way references ---", flush=True)
     t0 = time.time()
     needed_ids = _collect_needed_ids(filepath, max_zoom, bbox)
     print(f"  Elapsed: {time.time() - t0:.1f}s", flush=True)
 
-    # Second pass: load nodes
+    # ── Second pass: load nodes ──
     def way_filter(tags):
         return _way_zoom_ok(tags, max_zoom)
 
@@ -1559,7 +1606,7 @@ def _process_stage_two_pass(filepath, zooms, max_zoom, output_dir, args,
     del needed_ids
     print(f"  Elapsed: {time.time() - t0:.1f}s", flush=True)
 
-    # Build admin centres
+    # ── Build admin centres ──
     province_names, admin_centres = build_admin_centres(relations)
     place_nodes = parser.place_nodes
 
@@ -1572,9 +1619,9 @@ def _process_stage_two_pass(filepath, zooms, max_zoom, output_dir, args,
 
     print(f"  Data: nodes {len(nodes):,}, ways {len(ways):,}, "
           f"admin centres {len(admin_centres)} ({ac_summary}), "
-          f"province names {len(province_names)}", flush=True)
+          f"provinces {len(province_names)}", flush=True)
 
-    # Render
+    # ── Render ──
     for z in zooms:
         print(f"\n--- Rendering zoom {z} ---", flush=True)
         render_region(nodes, ways, relations, zoom=z,
@@ -1585,16 +1632,16 @@ def _process_stage_two_pass(filepath, zooms, max_zoom, output_dir, args,
             place_nodes=place_nodes, admin_centres=admin_centres,
             province_names=province_names)
 
-    # Free memory
+    # ── Release memory ──
     n_count = len(nodes)
     del nodes, ways, relations, admin_centres, province_names, place_nodes
     gc.collect()
-    print(f"  ✓ Stage complete, freed {n_count:,} node memory", flush=True)
+    print(f"  ✓ Stage complete, released {n_count:,} nodes from memory", flush=True)
 
 
 def _process_stage_chunk(filepath, zooms, max_zoom, output_dir, args,
                           bbox=None, stage_label=""):
-    """Single-pass mode stage (for each chunk after bbox splitting): full load → render → release"""
+    """Single-pass stage (for small chunks after bbox splitting): full load → render → release"""
     def way_filter(tags):
         return _way_zoom_ok(tags, max_zoom)
 
@@ -1623,7 +1670,7 @@ def _process_stage_chunk(filepath, zooms, max_zoom, output_dir, args,
 
     print(f"  Nodes {len(nodes):,}, ways {len(ways):,}, "
           f"admin centres {len(admin_centres)} ({ac_summary}), "
-          f"province names {len(province_names)}", flush=True)
+          f"provinces {len(province_names)}", flush=True)
 
     for z in zooms:
         print(f"\n--- Rendering zoom {z} ---", flush=True)
@@ -1638,14 +1685,11 @@ def _process_stage_chunk(filepath, zooms, max_zoom, output_dir, args,
     n_count = len(nodes)
     del nodes, ways, relations, admin_centres, province_names, place_nodes
     gc.collect()
-    print(f"  ✓ Chunk complete, freed {n_count:,} node memory", flush=True)
+    print(f"  ✓ Chunk complete, released {n_count:,} nodes from memory", flush=True)
 
-
-# Duplicate definitions below are kept as in original; they are identical and will be translated again.
-# (The original file contained repeated definitions due to copy-paste.)
 
 def _get_pbf_header_bbox(filepath):
-    """Get geographic bounding box from PBF header (south, west, north, east)"""
+    """Get geographic bounding box from PBF file header (south, west, north, east)"""
     try:
         with open(filepath, 'rb') as f:
             data, btype = OSMParser._read_blob(f)
@@ -1663,7 +1707,7 @@ def _get_pbf_header_bbox(filepath):
 
 
 def _split_bbox(bbox, nx=4, ny=3, buf=0.3):
-    """Split bbox into nx*ny sub-chunks, each expanded by buf degrees overlap"""
+    """Split bbox into nx*ny sub-chunks, each extended outward by buf degrees of overlap"""
     s, w, n, e = bbox
     lat_step = (n - s) / ny
     lon_step = (e - w) / nx
@@ -1679,7 +1723,7 @@ def _split_bbox(bbox, nx=4, ny=3, buf=0.3):
 
 
 def _collect_needed_ids(filepath, max_zoom, bbox=None):
-    """First pass: collect set of node IDs needed within specified max_zoom range"""
+    """First pass scan: collect node ID set needed within the specified max_zoom range"""
     def way_filter(tags):
         return _way_zoom_ok(tags, max_zoom)
 
@@ -1687,8 +1731,14 @@ def _collect_needed_ids(filepath, max_zoom, bbox=None):
     _, ways, relations = scanner.parse(filepath, ways_only=True)
 
     way_ids = set()
-    for _, _, nids in ways:
+    skipped_small = 0
+    for _, tags, nids in ways:
+        if max_zoom <= 8 and is_area(tags) and len(nids) < 50:
+            skipped_small += 1
+            continue
         way_ids.update(nids)
+    if skipped_small:
+        print(f"  Skipped small area features: {skipped_small:,}", flush=True)
 
     ac_ids = set()
     for _, tags, members in relations:
@@ -1702,7 +1752,7 @@ def _collect_needed_ids(filepath, max_zoom, bbox=None):
                         ac_ids.add(m["ref"])
 
     needed = way_ids | ac_ids
-    print(f"  way nodes: {len(way_ids):,}, admin centres: {len(ac_ids):,}, "
+    print(f"  Way nodes: {len(way_ids):,}, admin centres: {len(ac_ids):,}, "
           f"total: {len(needed):,}", flush=True)
     del way_ids, ac_ids, ways, relations
     return needed
@@ -1710,7 +1760,7 @@ def _collect_needed_ids(filepath, max_zoom, bbox=None):
 
 def _process_stage_two_pass(filepath, zooms, max_zoom, output_dir, args,
                              bbox=None, stage_label=""):
-    """Two-pass mode stage: scan → load (filtered) → render → release"""
+    """Two-pass stage: scan → load (filtered) → render → release"""
     print(f"\n{'=' * 60}", flush=True)
     print(f"  Stage [{stage_label}]  (two-pass mode)", flush=True)
     print(f"  zoom: {', '.join(str(z) for z in zooms)}, max_zoom={max_zoom}",
@@ -1747,7 +1797,7 @@ def _process_stage_two_pass(filepath, zooms, max_zoom, output_dir, args,
 
     print(f"  Data: nodes {len(nodes):,}, ways {len(ways):,}, "
           f"admin centres {len(admin_centres)} ({ac_summary}), "
-          f"province names {len(province_names)}", flush=True)
+          f"provinces {len(province_names)}", flush=True)
 
     for z in zooms:
         print(f"\n--- Rendering zoom {z} ---", flush=True)
@@ -1762,12 +1812,12 @@ def _process_stage_two_pass(filepath, zooms, max_zoom, output_dir, args,
     n_count = len(nodes)
     del nodes, ways, relations, admin_centres, province_names, place_nodes
     gc.collect()
-    print(f"  ✓ Stage complete, freed {n_count:,} node memory", flush=True)
+    print(f"  Stage complete, released {n_count:,} nodes from memory", flush=True)
 
 
 def _process_stage_chunk(filepath, zooms, max_zoom, output_dir, args,
                           bbox=None, stage_label=""):
-    """Single-pass mode stage (for each chunk after bbox splitting): full load → render → release"""
+    """Single-pass stage (chunks after bbox splitting): full load → render → release"""
     def way_filter(tags):
         return _way_zoom_ok(tags, max_zoom)
 
@@ -1796,7 +1846,7 @@ def _process_stage_chunk(filepath, zooms, max_zoom, output_dir, args,
 
     print(f"  Nodes {len(nodes):,}, ways {len(ways):,}, "
           f"admin centres {len(admin_centres)} ({ac_summary}), "
-          f"province names {len(province_names)}", flush=True)
+          f"provinces {len(province_names)}", flush=True)
 
     for z in zooms:
         print(f"\n--- Rendering zoom {z} ---", flush=True)
@@ -1811,14 +1861,14 @@ def _process_stage_chunk(filepath, zooms, max_zoom, output_dir, args,
     n_count = len(nodes)
     del nodes, ways, relations, admin_centres, province_names, place_nodes
     gc.collect()
-    print(f"  ✓ Chunk complete, freed {n_count:,} node memory", flush=True)
+    print(f"  Chunk complete, released {n_count:,} nodes from memory", flush=True)
 
 
 def main():
-    ap = argparse.ArgumentParser(description="OSM PBF -> tile images")
+    ap = argparse.ArgumentParser(description="OSM PBF → Tile Map")
     ap.add_argument("input", help="Input .osm.pbf file")
     ap.add_argument("-z", "--zoom", default=None,
-                    help="Zoom levels (e.g. 14 or 10-12); interactive if omitted")
+                    help="Zoom level (e.g. 14 or 10-12); interactive input if not specified")
     ap.add_argument("-b", "--bbox", default=None,
                     help="Bounding box: south,west,north,east")
     ap.add_argument("-o", "--output", default="gpsmap", help="Output directory")
@@ -1841,9 +1891,9 @@ def main():
     if args.zoom is not None:
         z_str = str(args.zoom)
     else:
-        z_input = input("Enter start zoom level [default 10]: ").strip()
+        z_input = input("Enter starting zoom level [default 10]: ").strip()
         start_z = int(z_input) if z_input else 10
-        z_input = input("Enter end zoom level [default 12]: ").strip()
+        z_input = input("Enter ending zoom level [default 12]: ").strip()
         end_z = int(z_input) if z_input else 12
         if start_z > end_z:
             start_z, end_z = end_z, start_z
@@ -1855,7 +1905,7 @@ def main():
     else:
         zooms = [int(z_str)]
 
-    print(f"Will render zooms: {', '.join(str(z) for z in zooms)}", flush=True)
+    print(f"Will render zoom: {', '.join(str(z) for z in zooms)}", flush=True)
 
     bbox = None
     if args.bbox:
@@ -1868,9 +1918,9 @@ def main():
     os.makedirs(args.output, exist_ok=True)
     fsz = os.path.getsize(fp)
 
-    # Small file / single-pass mode: keep original behaviour
+    # ── Small file / single-pass mode: keep original behavior ──
     if args.single_pass or fsz < 200 * 1024 * 1024:
-        print(f"\nSmall file/single-pass mode ({fsz / 1024 / 1024:.0f} MB)", flush=True)
+        print(f"\nSmall file / single-pass mode ({fsz / 1024 / 1024:.0f} MB)", flush=True)
         way_filter = lambda t: True
         actual_input = fp
         temp_file = None
@@ -1879,12 +1929,12 @@ def main():
             temp_file = os.path.join(args.output, "_extracted.pbf")
             if _osmium_extract(fp, bbox, temp_file):
                 tsz = os.path.getsize(temp_file)
-                print(f"osmium extraction successful: {tsz / 1024 / 1024:.0f} MB "
+                print(f"osmium extract succeeded: {tsz / 1024 / 1024:.0f} MB "
                       f"(original {fsz / 1024 / 1024:.0f} MB)", flush=True)
                 actual_input = temp_file
                 bbox = None
             else:
-                print("osmium unavailable, using Python bbox parsing...", flush=True)
+                print("osmium not available, using Python bbox parsing...", flush=True)
 
         parser = OSMParser(way_filter=way_filter, bbox=bbox)
         nodes, ways, relations = parser.parse(actual_input)
@@ -1901,7 +1951,7 @@ def main():
         print(f"\nData: nodes {len(nodes):,}, ways {len(ways):,}, "
               f"relations {len(relations):,}, place nodes {len(place_nodes):,}, "
               f"admin centres {len(admin_centres)} ({ac_summary}), "
-              f"province names {len(province_names)}", flush=True)
+              f"provinces {len(province_names)}", flush=True)
 
         for z in zooms:
             print(f"\n{'=' * 50}", flush=True)
@@ -1920,7 +1970,9 @@ def main():
         print("\nAll done!", flush=True)
         return
 
+    # ═══════════════════════════════════════════════════
     # Large file staged rendering
+    # ═══════════════════════════════════════════════════
     print(f"\nLarge file staged mode ({fsz / 1024 / 1024:.0f} MB)", flush=True)
 
     file_bbox = None
@@ -1933,10 +1985,11 @@ def main():
                   f"W={file_bbox[1]:.2f} N={file_bbox[2]:.2f} "
                   f"E={file_bbox[3]:.2f}", flush=True)
         else:
-            print("Unable to obtain file bbox, z13-14 will use full load", flush=True)
+            print("Unable to get file bbox, z13-14 will use full loading", flush=True)
 
     low_zooms = [z for z in zooms if z <= 8]
-    mid_zooms = [z for z in zooms if 9 <= z <= 12]
+    mid_low_zooms = [z for z in zooms if 9 <= z <= 10]
+    mid_high_zooms = [z for z in zooms if 11 <= z <= 12]
     high_zooms = [z for z in zooms if z >= 13]
 
     stage_idx = 0
@@ -1948,12 +2001,19 @@ def main():
             bbox=bbox,
             stage_label=f"{stage_idx}: z{min(low_zooms)}-{max(low_zooms)}")
 
-    if mid_zooms:
+    if mid_low_zooms:
         stage_idx += 1
         _process_stage_two_pass(
-            fp, mid_zooms, max(mid_zooms), args.output, args,
+            fp, mid_low_zooms, max(mid_low_zooms), args.output, args,
             bbox=bbox,
-            stage_label=f"{stage_idx}: z{min(mid_zooms)}-{max(mid_zooms)}")
+            stage_label=f"{stage_idx}: z{min(mid_low_zooms)}-{max(mid_low_zooms)}")
+
+    if mid_high_zooms:
+        stage_idx += 1
+        _process_stage_two_pass(
+            fp, mid_high_zooms, max(mid_high_zooms), args.output, args,
+            bbox=bbox,
+            stage_label=f"{stage_idx}: z{min(mid_high_zooms)}-{max(mid_high_zooms)}")
 
     if high_zooms:
         stage_idx += 1
@@ -1961,7 +2021,7 @@ def main():
             chunks = _split_bbox(file_bbox)
             if len(chunks) == 1:
                 print(f"\nz{min(high_zooms)}-{max(high_zooms)} "
-                      f"range is small, not splitting", flush=True)
+                      f"extent is small, no splitting needed", flush=True)
                 _process_stage_two_pass(
                     fp, high_zooms, max(high_zooms), args.output, args,
                     bbox=bbox,
@@ -1969,7 +2029,7 @@ def main():
                                 f"z{min(high_zooms)}-{max(high_zooms)}")
             else:
                 print(f"\nz{min(high_zooms)}-{max(high_zooms)} "
-                      f"geographical splitting: {len(chunks)} chunks", flush=True)
+                      f"geographic split: {len(chunks)} chunks", flush=True)
                 for ci, chunk_bbox in enumerate(chunks):
                     chunk_label = (
                         f"{stage_idx}: "
@@ -1984,6 +2044,7 @@ def main():
                 bbox=None,
                 stage_label=f"{stage_idx}: "
                             f"z{min(high_zooms)}-{max(high_zooms)}")
+
 
     print("\n" + "=" * 60, flush=True)
     print("  All stages complete!", flush=True)
