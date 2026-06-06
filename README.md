@@ -80,26 +80,26 @@ First, you need to understand zoom, which I call z (short for zoom).
 
 Here's an example to help you understand the z numbers:
 
-| Zoom Level | Per Tile | Stockholm                                                    | 上海                                                              | New York                                                              |
-|------------|----------|--------------------------------------------------------------|-------------------------------------------------------------------|-----------------------------------------------------------------------|
-| z6         | ~625km   | Hela Sverige + Östersjön                                     | 中国东部海岸线可见                                                | U.S. East Coast, Maine to Florida                                     |
-| z7         | ~312km   | Södra Sverige, de tre stora städerna Stockholm-Göteborg-Malmö | 长三角城市群轮廓，长江入海口                                      | New York–Boston–Washington corridor                                   |
-| z8         | ~156km   | Mälaren, Östersjöns öar, E4:an mot Uppsala                   | 上海全市+苏州+杭州湾                                             | New York City's five boroughs + New Jersey + Long Island              |
-| z9         | ~78km    | Stockholms innerstad + förorter, skärgården                   | 外环高速、黄浦江蜿蜒、浦东浦西                                    | Hudson River, Manhattan's elongated shape, Central Park               |
-| z10        | ~39km    | Kungsholmen, Gamla Stan, Djurgården, E20                     | 内环/南北高架、陆家嘴、世博园                                     | Central Park, Lincoln Tunnel, Brooklyn Bridge                         |
-| z11        | ~19km    | Kungsträdgården, Stadshuset, Vasamuseet, Röda linjen         | 人民广场、外滩、东方明珠、世纪公园                                | Times Square, Central Park, Empire State Building, East River         |
-| z12        | ~9.7km   | Gamla Stans gränder, Nobelmuseet, Slottet, tunnelbanestation  | 南京路、豫园、陆家嘴三件套                                        | Statue of Liberty, Wall Street, Fifth Avenue, United Nations          |
-| z13        | ~4.8km   | Enskilda gator synliga, Stortorget i Gamla Stan               | 外滩每栋建筑轮廓、陆家嘴绿地                                      | Manhattan grid streets, each avenue clearly visible                   |
-| z14        | ~2.4km   | Tunnelbanenedgångar, enstaka byggnadsgrupper                  | 豫园九曲桥、外白渡桥                                              | Statue of Liberty base, Empire State Building shadows                 |
+| Zoom Level | Per Tile | 上海 | New York |
+|------------|----------|------|----------|
+| z6 | ~625km | 中国东部海岸线可见 | U.S. East Coast, Maine to Florida |
+| z7 | ~312km | 长三角城市群轮廓，长江入海口 | New York–Boston–Washington corridor |
+| z8 | ~156km | 上海全市+苏州+杭州湾 | New York City's five boroughs + New Jersey + Long Island |
+| z9 | ~78km | 外环高速、黄浦江蜿蜒、浦东浦西 | Hudson River, Manhattan's elongated shape, Central Park |
+| z10 | ~39km | 内环/南北高架、陆家嘴、世博园 | Central Park, Lincoln Tunnel, Brooklyn Bridge |
+| z11 | ~19km | 人民广场、外滩、东方明珠、世纪公园 | Times Square, Central Park, Empire State Building, East River |
+| z12 | ~9.7km | 南京路、豫园、陆家嘴三件套 | Statue of Liberty, Wall Street, Fifth Avenue, United Nations |
+| z13 | ~4.8km | 外滩每栋建筑轮廓、陆家嘴绿地 | Manhattan grid streets, each avenue clearly visible |
+| z14 | ~2.4km | 豫园九曲桥、外白渡桥 | Statue of Liberty base, Empire State Building shadows |
 
 Everyday scenes roughly correspond to:
 
-| Zoom Level | Stockholm                                           | 上海                             | New York                                               |
-|------------|-----------------------------------------------------|----------------------------------|--------------------------------------------------------|
-| z6         | "Jag är i Sverige"                                  | "我在华东"                       | "I'm in the Northeastern U.S."                         |
-| z8         | "Åk in till stan via E4"                            | "走沪杭高速进城"                 | "Cross the bridge from New Jersey into Manhattan"      |
-| z10        | "I närheten av Kungsholmen"                         | "快到内环了"                     | "Driving from Brooklyn toward Manhattan"               |
-| z12        | "Framme i Gamla Stan, letar parkering"              | "南京路附近到了"                 | "Near Wall Street, we've arrived"                      |
+| Zoom Level | 上海 | New York |
+|------------|------|----------|
+| z6 | "我在华东" | "I'm in the Northeastern U.S." |
+| z8 | "走沪杭高速进城" | "Cross the bridge from New Jersey into Manhattan" |
+| z10 | "快到内环了" | "Driving from Brooklyn toward Manhattan" |
+| z12 | "南京路附近到了" | "Near Wall Street, we've arrived" |
 
 Now that you have a basic understanding of what I define as z, let's move on to the next step: Non-interactive Mode.
 
@@ -115,10 +115,12 @@ python osm2tiles.py input.osm.pbf -z 10-13 -b S,W,N,E
 python osm2tiles.py input.osm.pbf -b S,W,N,E
 ```
 
-Reading the map into memory for indexing does consume some memory, but don't worry—I spent a considerable amount of time solving memory usage issues during conversion. However, if your map is ridiculously large (probably not bigger than what I tested with? How many people tested with gigabyte-sized maps?), your computer should have enough RAM.
-Reference: a ~50MB map uses at most 2GB of memory during conversion, averaging around 1.7GB.
+**update: 10G free RAM should be a plenty if your map is not too large, I have done a lot optimization.** If you want to convert global map, I have tested the last edition(which can be 2-3 times more RAM used than current version) which need 106G+.
 
-**If you're using PowerShell, the screen might not update.** Blame Microsoft, not me.
+**If you're using PowerShell, the screen might not update that might you suspect the program is freezing.** 
+
+Blame Microsoft, not me.
+
 Workaround:
 - Either press any key casually and the text will refresh,
 - Or run `$PSDefaultParameterValues['Out-Host:Pager'] = ''` first, then `python osm2tiles.py`. Remember this is temporary, so don't close the window after running the first command.
