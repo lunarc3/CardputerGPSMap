@@ -413,6 +413,132 @@ def is_poi(tags):
         "healthcare", "emergency", "place", "man_made", "natural", "power"))
 
 
+
+# ════════════════════════════════════════════════════════════════
+# §2.1  语言过滤
+# ════════════════════════════════════════════════════════════════
+
+_LANG = ""
+
+_ALWAYS_OK = [
+    (0x0020, 0x007E),   # Basic Latin printable
+    (0x00A0, 0x024F),   # Latin-1 Supplement + Latin Extended A
+    (0x0300, 0x036F),   # Combining Diacritical Marks
+    (0x2010, 0x2027),   # General Punctuation (dashes)
+    (0x2030, 0x205E),   # General Punctuation
+    (0xFF01, 0xFF5E),   # Fullwidth ASCII variants
+]
+
+_ALLOWED_RANGES = {
+    "zh": [
+        (0x2E80, 0x2EFF), (0x3000, 0x303F), (0x3400, 0x4DBF),
+        (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0x20000, 0x2A6DF),
+    ],
+    "ja": [
+        (0x2E80, 0x2EFF), (0x3000, 0x303F), (0x3040, 0x309F),
+        (0x30A0, 0x30FF), (0x31F0, 0x31FF), (0x3400, 0x4DBF),
+        (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0x20000, 0x2A6DF),
+    ],
+    "ko": [
+        (0x1100, 0x11FF), (0x2E80, 0x2EFF), (0x3000, 0x303F),
+        (0x3130, 0x318F), (0x3400, 0x4DBF), (0x4E00, 0x9FFF),
+        (0xAC00, 0xD7AF), (0xF900, 0xFAFF),
+    ],
+    "ru": [
+        (0x0400, 0x04FF), (0x0500, 0x052F),
+    ],
+    "ar": [
+        (0x0600, 0x06FF), (0x0750, 0x077F),
+        (0xFB50, 0xFDFF), (0xFE70, 0xFEFF),
+    ],
+    "hi": [
+        (0x0900, 0x097F), (0x0980, 0x09FF),
+    ],
+    "th": [
+        (0x0E00, 0x0E7F),
+    ],
+}
+
+
+def _char_is_ok(ch):
+    cp = ord(ch)
+    for lo, hi in _ALWAYS_OK:
+        if lo <= cp <= hi:
+            return True
+    ranges = _ALLOWED_RANGES.get(_LANG, [])
+    for lo, hi in ranges:
+        if lo <= cp <= hi:
+            return True
+    return False
+
+
+def _get_name(tags):
+    """根据 _LANG 获取地物名称。优先取 name:{_LANG}，否则过滤 name 标签。"""
+    if not _LANG:
+        return tags.get("name", "")
+    key = f"name:{_LANG}"
+    direct = tags.get(key)
+    if direct:
+        return direct
+    raw = tags.get("name", "")
+    if not raw:
+        return ""
+    filtered = "".join(ch for ch in raw if _char_is_ok(ch))
+    parts = filtered.split()
+    return " ".join(parts)
+
+
+_LANG_NAMES = {
+    "zh": "中文", "en": "English", "ja": "日本語", "ko": "한국어",
+    "ru": "Русский", "ar": "العربية", "hi": "हिन्दी", "th": "ไทย",
+    "ug": "ئۇيغۇرچە", "bo": "བོད་སྐད", "mn": "Монгол",
+    "de": "Deutsch", "fr": "Français", "es": "Español",
+    "pt": "Português", "it": "Italiano", "nl": "Nederlands",
+    "vi": "Tiếng Việt", "tr": "Türkçe", "pl": "Polski",
+}
+
+
+def _scan_languages(filepath):
+    """快速扫描 PBF StringTable，收集 name:xx 语言标签"""
+    lang_blocks = {}
+    t0 = time.time()
+    with open(filepath, "rb") as f:
+        data, btype = OSMParser._read_blob(f)
+        if data is None:
+            return []
+        blk = 0
+        while True:
+            data, btype = OSMParser._read_blob(f)
+            if data is None:
+                break
+            if btype != "OSMData":
+                continue
+            blk += 1
+            try:
+                pb = osmpbf.PrimitiveBlock()
+                pb.ParseFromString(data)
+            except Exception:
+                continue
+            found = set()
+            for s in pb.stringtable.s:
+                try:
+                    decoded = s.decode("utf-8", errors="replace")
+                    if decoded.startswith("name:"):
+                        lang = decoded[5:]
+                        if lang and len(lang) <= 10 and lang.isalpha():
+                            found.add(lang)
+                except Exception:
+                    pass
+            for lang in found:
+                lang_blocks[lang] = lang_blocks.get(lang, 0) + 1
+            if blk % 5000 == 0:
+                print(f"\r  扫描中... {blk} 块, "
+                      f"{time.time() - t0:.0f}s", end="", flush=True)
+    print(f"\r  扫描完成: {blk} 块, "
+          f"耗时 {time.time() - t0:.1f}s        ", flush=True)
+    return sorted(lang_blocks.items(), key=lambda x: -x[1])
+
+
 # ════════════════════════════════════════════════════════════════
 # §3  Zoom 级别过滤
 # ════════════════════════════════════════════════════════════════
@@ -557,7 +683,7 @@ def _douglas_peucker(points, epsilon):
     return [points[i] for i in range(n) if keep[i]]
 
 
-# §3.1   文字字号 + 白色描边
+# §3.1  文字字号 + 白色描边
 # ════════════════════════════════════════════════════════════════
 
 def _label_font_size(tags, zoom):
@@ -647,7 +773,7 @@ def _draw_small_icon(draw, cx, cy, filled, outline, fill_color):
 
 
 # ════════════════════════════════════════════════════════════════
-# §3.3  行政中心提取（admin_centre，权威数据）
+# §3.3 行政中心提取（admin_centre，权威数据）
 # ════════════════════════════════════════════════════════════════
 
 def build_admin_centres(relations):
@@ -657,7 +783,7 @@ def build_admin_centres(relations):
         if (tags.get("type") == "boundary"
                 and tags.get("boundary") == "administrative"):
             al = tags.get("admin_level", "")
-            nm = tags.get("name", "")
+            nm = _get_name(tags)
             if not nm or al not in ("4", "5", "6"):
                 continue
             for m in members:
@@ -991,7 +1117,7 @@ class OSMParser:
                 tags = tl[j]
                 p = tags.get("place")
                 if p in _PLACE_TYPES:
-                    nm = tags.get("name", "")
+                    nm = _get_name(tags)
                     if nm:
                         self.place_nodes[ids[j]] = (nm, p)
                 if store_mask[j]:
@@ -1003,7 +1129,7 @@ class OSMParser:
                 tags = tl[j]
                 p = tags.get("place")
                 if p in _PLACE_TYPES:
-                    nm = tags.get("name", "")
+                    nm = _get_name(tags)
                     if nm:
                         self.place_nodes[ids[j]] = (nm, p)
                 if self._should_store(ids[j], lats[j], lons[j], tags, nif):
@@ -1021,7 +1147,7 @@ class OSMParser:
         lon = 1e-9 * (pb.lon_offset + pb.granularity * nd.lon)
         p = tags.get("place")
         if p in _PLACE_TYPES:
-            nm = tags.get("name", "")
+            nm = _get_name(tags)
             if nm:
                 self.place_nodes[nd.id] = (nm, p)
         if self._should_store(nd.id, lat, lon, tags, nif):
@@ -1320,7 +1446,7 @@ def render_region(nodes, ways, relations, zoom=14,
                         hs = isz / 2
                         draw.ellipse([cx - hs, cy - hs, cx + hs, cy + hs],
                                      fill=ic)
-                        nm = pt.get("name", "")
+                        nm = _get_name(pt)
                         if isn and nm:
                             ft = _font(9)
                             bb = draw.textbbox((0, 0), nm, font=ft)
@@ -1334,7 +1460,7 @@ def render_region(nodes, ways, relations, zoom=14,
                     all_it = lines + areas + pois if render_areas else lines
                     for _, wt, wc in all_it:
                         if not _label_zoom_ok(wt, zoom): continue
-                        nm = wt.get("name", "")
+                        nm = _get_name(wt)
                         if not nm or nm in rendered_names: continue
                         rendered_names.add(nm)
                         pts = [(px - x0, py - y0)
@@ -1457,7 +1583,7 @@ def render_region(nodes, ways, relations, zoom=14,
 
 
 # ════════════════════════════════════════════════════════════════
-# §8   分阶段渲染 + 主程序
+# §8  分阶段渲染 + 主程序
 # ════════════════════════════════════════════════════════════════
 
 def _osmium_extract(input_file, bbox, output_file):
@@ -1879,14 +2005,60 @@ def main():
     ap.add_argument("--no-ways", action="store_true")
     ap.add_argument("--no-pois", action="store_true")
     ap.add_argument("--no-labels", action="store_true")
+    ap.add_argument("--lang", default="",
+                    help="Map language (zh/en/ja/ko/ru/ar/hi/th), default uses original name tags")
     ap.add_argument("--single-pass", action="store_true",
                     help="单遍模式（小文件用）")
     args = ap.parse_args()
+    global _LANG
+    _LANG = args.lang
 
     fp = args.input
     if not os.path.exists(fp):
         print(f"文件不存在: {fp}")
         sys.exit(1)
+
+    # ── 语言选择 ──
+    if not _LANG:
+        if sys.stdin.isatty():
+            print(f"\n扫描 {fp} 中的可用语言...", flush=True)
+            langs = _scan_languages(fp)
+            if langs:
+                print("\n可用地图语言:")
+                options = []
+                for i, (code, count) in enumerate(langs[:20]):
+                    name = _LANG_NAMES.get(code, "")
+                    label = f"{name} ({code})" if name else code
+                    if count > 5000:
+                        freq = "高频"
+                    elif count > 1000:
+                        freq = "中频"
+                    else:
+                        freq = "低频"
+                    print(f"  {i + 1}. {label} [{freq}]")
+                    options.append(code)
+                print(f"  {len(options) + 1}. 不过滤 (使用原始name标签)")
+                try:
+                    choice = input(
+                        f"\n请选择 [默认 1]: ").strip()
+                    if choice:
+                        idx = int(choice) - 1
+                        if 0 <= idx < len(options):
+                            _LANG = options[idx]
+                    else:
+                        _LANG = options[0]
+                except (ValueError, EOFError):
+                    _LANG = options[0]
+                if _LANG:
+                    lang_name = _LANG_NAMES.get(_LANG, _LANG)
+                    print(f"已选择: {lang_name} ({_LANG})")
+                else:
+                    print("已选择: 不过滤")
+            else:
+                print("  未发现语言标签，使用原始name")
+        else:
+            print("未指定语言且非交互模式，使用原始name "
+                  "(用 --lang 指定语言)")
 
     if args.zoom is not None:
         z_str = str(args.zoom)
