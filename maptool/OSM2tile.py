@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-osm2tiles.py — OSM PBF → Tile Conversion (OSM Carto Standard Colors)
+osm2tiles.py — OSM PBF → Tile Rendering (OSM Carto Standard Colors)
 
 Features:
   1. power=* / man_made=* not rendered at any zoom level
-  2. Road/waterway/railway widths scaled by zoom level
-  3. z6-7 simplified: motorway+trunk+river+water bodies+forest areas only
-  4. z8 onwards: features progressively enabled
-  5. z11/z12 icons: hospital red cross, school/university building, railway station train, airport airplane
+  2. Road/waterway/railway widths scale with zoom
+  3. z6-7 simplified: motorway+trunk+river+water area+forest area only
+  4. z8+ progressively includes more features
+  5. z11/z12 icons: hospital cross, school/university building, train station, airport
   6. Name deduplication within each tile
   7. Block-level bbox binary scanning + numpy node storage
-  8. z6-7 motorway+trunk only; z8-11 motorway+trunk+primary only
+  8. z6-7: motorway+trunk only; z8-11: motorway+trunk+primary only
   9. Administrative boundaries removed
-  10. z6-10 waterways: river+canal only; stream deferred to z11
-  11. Text sized by zoom+place level + 1px white stroke
-  12. z6: Province names 14px (admin_level=4) + prefecture-level city dots (admin_level=5)
-  13. z7: Prefecture-level city names 14px (admin_centre level=5, fallback level=4)
+  10. z6-10 waterways: river+canal only; stream delayed to z11
+  11. Text font size based on zoom+place level + 1px white stroke
+  12. z6: province name 14px (admin_level=4) + prefecture city dots (admin_level=5)
+  13. z7: prefecture city name 14px (admin_centre level=5, fallback level=4)
   14. z8-12: admin_centres level=5 (prefecture) + level=6 (county)
   15. z13+: place_nodes + admin_centres level=6 supplement
   16. Large file staged rendering: z6-8 / z9-12 label-filtered nodes, z13-14 geographic splitting
@@ -181,7 +181,7 @@ message ChangeSet { optional int64 id = 1; }
         print("Please run: pip install protobuf grpcio-tools")
         sys.exit(1)
     import fileformat_pb2 as _ff, osmformat_pb2 as _of
-    print("protobuf module auto-generated successfully!", flush=True)
+    print("protobuf module auto-generated!", flush=True)
     return _ff, _of
 
 
@@ -413,6 +413,132 @@ def is_poi(tags):
         "healthcare", "emergency", "place", "man_made", "natural", "power"))
 
 
+
+# ════════════════════════════════════════════════════════════════
+# §2.1  Language Filtering
+# ════════════════════════════════════════════════════════════════
+
+_LANG = ""
+
+_ALWAYS_OK = [
+    (0x0020, 0x007E),   # Basic Latin printable
+    (0x00A0, 0x024F),   # Latin-1 Supplement + Latin Extended A
+    (0x0300, 0x036F),   # Combining Diacritical Marks
+    (0x2010, 0x2027),   # General Punctuation (dashes)
+    (0x2030, 0x205E),   # General Punctuation
+    (0xFF01, 0xFF5E),   # Fullwidth ASCII variants
+]
+
+_ALLOWED_RANGES = {
+    "zh": [
+        (0x2E80, 0x2EFF), (0x3000, 0x303F), (0x3400, 0x4DBF),
+        (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0x20000, 0x2A6DF),
+    ],
+    "ja": [
+        (0x2E80, 0x2EFF), (0x3000, 0x303F), (0x3040, 0x309F),
+        (0x30A0, 0x30FF), (0x31F0, 0x31FF), (0x3400, 0x4DBF),
+        (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0x20000, 0x2A6DF),
+    ],
+    "ko": [
+        (0x1100, 0x11FF), (0x2E80, 0x2EFF), (0x3000, 0x303F),
+        (0x3130, 0x318F), (0x3400, 0x4DBF), (0x4E00, 0x9FFF),
+        (0xAC00, 0xD7AF), (0xF900, 0xFAFF),
+    ],
+    "ru": [
+        (0x0400, 0x04FF), (0x0500, 0x052F),
+    ],
+    "ar": [
+        (0x0600, 0x06FF), (0x0750, 0x077F),
+        (0xFB50, 0xFDFF), (0xFE70, 0xFEFF),
+    ],
+    "hi": [
+        (0x0900, 0x097F), (0x0980, 0x09FF),
+    ],
+    "th": [
+        (0x0E00, 0x0E7F),
+    ],
+}
+
+
+def _char_is_ok(ch):
+    cp = ord(ch)
+    for lo, hi in _ALWAYS_OK:
+        if lo <= cp <= hi:
+            return True
+    ranges = _ALLOWED_RANGES.get(_LANG, [])
+    for lo, hi in ranges:
+        if lo <= cp <= hi:
+            return True
+    return False
+
+
+def _get_name(tags):
+    """Get feature name based on _LANG. Prefers name:{_LANG}, otherwise filters the name tag."""
+    if not _LANG:
+        return tags.get("name", "")
+    key = f"name:{_LANG}"
+    direct = tags.get(key)
+    if direct:
+        return direct
+    raw = tags.get("name", "")
+    if not raw:
+        return ""
+    filtered = "".join(ch for ch in raw if _char_is_ok(ch))
+    parts = filtered.split()
+    return " ".join(parts)
+
+
+_LANG_NAMES = {
+    "zh": "Chinese", "en": "English", "ja": "Japanese", "ko": "Korean",
+    "ru": "Russian", "ar": "Arabic", "hi": "Hindi", "th": "Thai",
+    "ug": "Uyghur", "bo": "Tibetan", "mn": "Mongolian",
+    "de": "German", "fr": "French", "es": "Spanish",
+    "pt": "Portuguese", "it": "Italian", "nl": "Dutch",
+    "vi": "Vietnamese", "tr": "Turkish", "pl": "Polish",
+}
+
+
+def _scan_languages(filepath):
+    """Quickly scan PBF StringTable to collect name:xx language tags."""
+    lang_blocks = {}
+    t0 = time.time()
+    with open(filepath, "rb") as f:
+        data, btype = OSMParser._read_blob(f)
+        if data is None:
+            return []
+        blk = 0
+        while True:
+            data, btype = OSMParser._read_blob(f)
+            if data is None:
+                break
+            if btype != "OSMData":
+                continue
+            blk += 1
+            try:
+                pb = osmpbf.PrimitiveBlock()
+                pb.ParseFromString(data)
+            except Exception:
+                continue
+            found = set()
+            for s in pb.stringtable.s:
+                try:
+                    decoded = s.decode("utf-8", errors="replace")
+                    if decoded.startswith("name:"):
+                        lang = decoded[5:]
+                        if lang and len(lang) <= 10 and lang.isalpha():
+                            found.add(lang)
+                except Exception:
+                    pass
+            for lang in found:
+                lang_blocks[lang] = lang_blocks.get(lang, 0) + 1
+            if blk % 5000 == 0:
+                print(f"\r  Scanning... {blk} blocks, "
+                      f"{time.time() - t0:.0f}s", end="", flush=True)
+    print(f"\r  Scan complete: {blk} blocks, "
+          f"elapsed {time.time() - t0:.1f}s        ", flush=True)
+    return sorted(lang_blocks.items(), key=lambda x: -x[1])
+
+
 # ════════════════════════════════════════════════════════════════
 # §3  Zoom Level Filtering
 # ════════════════════════════════════════════════════════════════
@@ -518,7 +644,7 @@ _SIMPLIFY_TOL = {6: 5.0, 7: 4.0, 8: 3.0, 9: 2.0, 10: 1.5}
 
 
 def _douglas_peucker(points, epsilon):
-    """Douglas-Peucker line simplification (iterative, pixel space)"""
+    """Douglas-Peucker line simplification (iterative, pixel space)."""
     n = len(points)
     if n <= 2:
         return points
@@ -557,7 +683,7 @@ def _douglas_peucker(points, epsilon):
     return [points[i] for i in range(n) if keep[i]]
 
 
-# §3.1  Text font size + white stroke
+# §3.1  Label font size + white stroke
 # ════════════════════════════════════════════════════════════════
 
 def _label_font_size(tags, zoom):
@@ -577,7 +703,7 @@ def _draw_text(draw, x, y, nm, font_size, fill="#333333"):
 
 
 # ════════════════════════════════════════════════════════════════
-# §3.2  z11/z12 small icons
+# §3.2  z11/z12 Small Icons
 # ════════════════════════════════════════════════════════════════
 
 def _precompute_icon(fill_pixels, n=8):
@@ -647,7 +773,7 @@ def _draw_small_icon(draw, cx, cy, filled, outline, fill_color):
 
 
 # ════════════════════════════════════════════════════════════════
-# §3.3  Admin centre extraction (admin_centre, authoritative data)
+# §3.3  Admin Centre Extraction (admin_centre, authoritative data)
 # ════════════════════════════════════════════════════════════════
 
 def build_admin_centres(relations):
@@ -657,7 +783,7 @@ def build_admin_centres(relations):
         if (tags.get("type") == "boundary"
                 and tags.get("boundary") == "administrative"):
             al = tags.get("admin_level", "")
-            nm = tags.get("name", "")
+            nm = _get_name(tags)
             if not nm or al not in ("4", "5", "6"):
                 continue
             for m in members:
@@ -891,12 +1017,12 @@ class OSMParser:
         with open(filepath, 'rb') as f:
             data, btype = self._read_blob(f)
             if data is None:
-                print("Error: Unable to read file header", flush=True)
+                print("Error: unable to read file header", flush=True)
                 return nodes, ways, relations
             hdr = osmpbf.HeaderBlock(); hdr.ParseFromString(data)
             for feat in hdr.required_features:
                 if feat not in self.NEEDED:
-                    print(f"Error: Unsupported feature '{feat}'", flush=True)
+                    print(f"Error: unsupported feature '{feat}'", flush=True)
                     return nodes, ways, relations
             blk = 0; skipped = 0; t0 = time.time(); tp = t0; nc = 0
             while True:
@@ -909,7 +1035,7 @@ class OSMParser:
                 try:
                     pb = osmpbf.PrimitiveBlock(); pb.ParseFromString(data)
                 except Exception as e:
-                    print(f"\nWarning: Block {blk} parse error: {e}", flush=True)
+                    print(f"\nWarning: block {blk} parse error: {e}", flush=True)
                     continue
                 st = pb.stringtable.s
                 for grp in pb.primitivegroup:
@@ -929,7 +1055,7 @@ class OSMParser:
                           f"{now - t0:.0f}s", end="", flush=True)
                     tp = now
         if nodes is not None: nodes.finalize()
-        print(f"\nParsing complete: nodes {nc:,}, ways {len(ways):,}, "
+        print(f"\nParse complete: nodes {nc:,}, ways {len(ways):,}, "
               f"relations {len(relations):,}, place nodes {len(self.place_nodes):,}, "
               f"skipped {skipped} blocks, elapsed {time.time() - t0:.1f}s", flush=True)
         return nodes, ways, relations
@@ -991,7 +1117,7 @@ class OSMParser:
                 tags = tl[j]
                 p = tags.get("place")
                 if p in _PLACE_TYPES:
-                    nm = tags.get("name", "")
+                    nm = _get_name(tags)
                     if nm:
                         self.place_nodes[ids[j]] = (nm, p)
                 if store_mask[j]:
@@ -1003,7 +1129,7 @@ class OSMParser:
                 tags = tl[j]
                 p = tags.get("place")
                 if p in _PLACE_TYPES:
-                    nm = tags.get("name", "")
+                    nm = _get_name(tags)
                     if nm:
                         self.place_nodes[ids[j]] = (nm, p)
                 if self._should_store(ids[j], lats[j], lons[j], tags, nif):
@@ -1021,7 +1147,7 @@ class OSMParser:
         lon = 1e-9 * (pb.lon_offset + pb.granularity * nd.lon)
         p = tags.get("place")
         if p in _PLACE_TYPES:
-            nm = tags.get("name", "")
+            nm = _get_name(tags)
             if nm:
                 self.place_nodes[nd.id] = (nm, p)
         if self._should_store(nd.id, lat, lon, tags, nif):
@@ -1107,7 +1233,7 @@ def _font(size):
 
 
 # ════════════════════════════════════════════════════════════════
-# §7  render_region (z8-12 unified admin_centres)
+# §7  render_region (z8-12 unified admin_centres usage)
 # ════════════════════════════════════════════════════════════════
 
 def deg2tile(lon, lat, z):
@@ -1178,8 +1304,8 @@ def render_region(nodes, ways, relations, zoom=14,
     ty = np.floor(fpy / tile_size).astype(np.int32)
     occ = set(zip(tx.tolist(), ty.tolist()))
     os.makedirs(output_dir, exist_ok=True)
-    print(f"Canvas: {cw}x{ch}, Tiles: {ntx}x{nty}={ntx * nty}, "
-          f"With data: {len(occ)}, Global origin: ({global_tx0},{global_ty0})",
+    print(f"Canvas: {cw}x{ch}, tiles: {ntx}x{nty}={ntx * nty}, "
+          f"with data: {len(occ)}, global origin: ({global_tx0},{global_ty0})",
           flush=True)
 
     print("Building node-to-way index...", flush=True)
@@ -1320,7 +1446,7 @@ def render_region(nodes, ways, relations, zoom=14,
                         hs = isz / 2
                         draw.ellipse([cx - hs, cy - hs, cx + hs, cy + hs],
                                      fill=ic)
-                        nm = pt.get("name", "")
+                        nm = _get_name(pt)
                         if isn and nm:
                             ft = _font(9)
                             bb = draw.textbbox((0, 0), nm, font=ft)
@@ -1334,7 +1460,7 @@ def render_region(nodes, ways, relations, zoom=14,
                     all_it = lines + areas + pois if render_areas else lines
                     for _, wt, wc in all_it:
                         if not _label_zoom_ok(wt, zoom): continue
-                        nm = wt.get("name", "")
+                        nm = _get_name(wt)
                         if not nm or nm in rendered_names: continue
                         rendered_names.add(nm)
                         pts = [(px - x0, py - y0)
@@ -1474,7 +1600,7 @@ def _osmium_extract(input_file, bbox, output_file):
 
 
 def _get_pbf_header_bbox(filepath):
-    """Get geographic bounding box from PBF file header (south, west, north, east)"""
+    """Get geographic bounding box from PBF file header (south, west, north, east)."""
     try:
         with open(filepath, 'rb') as f:
             data, btype = OSMParser._read_blob(f)
@@ -1493,9 +1619,9 @@ def _get_pbf_header_bbox(filepath):
 
 def _split_bbox(bbox, buf_deg=0.3, target_chunk_deg=15):
     """Adaptively split bbox:
-    - Small extent (<10 degrees): no splitting
-    - Medium/large extent: dynamically compute nx/ny based on target_chunk_deg
-    Returns [(south, west, north, east), ...] list, each chunk with buf overlap
+    - Small extent (<10 degrees) won't be split
+    - Medium/large extent dynamically calculates nx/ny based on target_chunk_deg
+    Returns [(south, west, north, east), ...] list, each chunk with buf overlap.
     """
     s, w, n, e = bbox
     width = e - w
@@ -1535,14 +1661,14 @@ def _split_bbox(bbox, buf_deg=0.3, target_chunk_deg=15):
 
 
 def _collect_needed_ids(filepath, max_zoom, bbox=None):
-    """First pass scan: collect node ID set needed within the specified max_zoom range"""
+    """First-pass scan: collect the set of node IDs needed for the specified max_zoom range."""
     def way_filter(tags):
         return _way_zoom_ok(tags, max_zoom)
 
     scanner = OSMParser(way_filter=way_filter, bbox=bbox)
     _, ways, relations = scanner.parse(filepath, ways_only=True)
 
-    # Nodes referenced by ways
+    # Way-referenced nodes
     way_ids = set()
     skipped_small = 0
     for _, tags, nids in ways:
@@ -1572,14 +1698,14 @@ def _collect_needed_ids(filepath, max_zoom, bbox=None):
     needed_arr = np.fromiter(needed, dtype=np.int64)
     needed_arr.sort()
     print(f"  numpy: {needed_arr.nbytes / 1024 / 1024:.0f} MB "
-          f"(set approx. {len(needed) * 40 // 1024 // 1024} MB)", flush=True)
+          f"(set approx {len(needed) * 40 // 1024 // 1024} MB)", flush=True)
     del needed, ways, relations
     return needed_arr
 
 
 def _process_stage_two_pass(filepath, zooms, max_zoom, output_dir, args,
                              bbox=None, stage_label=""):
-    """Two-pass stage: scan → load (filtered) → render → release"""
+    """Two-pass stage: scan → load (filtered) → render → release."""
     print(f"\n{'=' * 60}", flush=True)
     print(f"  Stage [{stage_label}]  (two-pass mode)", flush=True)
     print(f"  zoom: {', '.join(str(z) for z in zooms)}, max_zoom={max_zoom}",
@@ -1636,12 +1762,12 @@ def _process_stage_two_pass(filepath, zooms, max_zoom, output_dir, args,
     n_count = len(nodes)
     del nodes, ways, relations, admin_centres, province_names, place_nodes
     gc.collect()
-    print(f"  ✓ Stage complete, released {n_count:,} nodes from memory", flush=True)
+    print(f"  Stage complete, released {n_count:,} nodes from memory", flush=True)
 
 
 def _process_stage_chunk(filepath, zooms, max_zoom, output_dir, args,
                           bbox=None, stage_label=""):
-    """Single-pass stage (for small chunks after bbox splitting): full load → render → release"""
+    """Single-pass stage (for each small chunk after bbox splitting): full load → render → release."""
     def way_filter(tags):
         return _way_zoom_ok(tags, max_zoom)
 
@@ -1685,11 +1811,11 @@ def _process_stage_chunk(filepath, zooms, max_zoom, output_dir, args,
     n_count = len(nodes)
     del nodes, ways, relations, admin_centres, province_names, place_nodes
     gc.collect()
-    print(f"  ✓ Chunk complete, released {n_count:,} nodes from memory", flush=True)
+    print(f"  Chunk complete, released {n_count:,} nodes from memory", flush=True)
 
 
 def _get_pbf_header_bbox(filepath):
-    """Get geographic bounding box from PBF file header (south, west, north, east)"""
+    """Get geographic bounding box from PBF file header (south, west, north, east)."""
     try:
         with open(filepath, 'rb') as f:
             data, btype = OSMParser._read_blob(f)
@@ -1707,7 +1833,7 @@ def _get_pbf_header_bbox(filepath):
 
 
 def _split_bbox(bbox, nx=4, ny=3, buf=0.3):
-    """Split bbox into nx*ny sub-chunks, each extended outward by buf degrees of overlap"""
+    """Split bbox into nx*ny sub-chunks, each expanded outward by buf degrees of overlap."""
     s, w, n, e = bbox
     lat_step = (n - s) / ny
     lon_step = (e - w) / nx
@@ -1723,7 +1849,7 @@ def _split_bbox(bbox, nx=4, ny=3, buf=0.3):
 
 
 def _collect_needed_ids(filepath, max_zoom, bbox=None):
-    """First pass scan: collect node ID set needed within the specified max_zoom range"""
+    """First-pass scan: collect the set of node IDs needed for the specified max_zoom range."""
     def way_filter(tags):
         return _way_zoom_ok(tags, max_zoom)
 
@@ -1760,7 +1886,7 @@ def _collect_needed_ids(filepath, max_zoom, bbox=None):
 
 def _process_stage_two_pass(filepath, zooms, max_zoom, output_dir, args,
                              bbox=None, stage_label=""):
-    """Two-pass stage: scan → load (filtered) → render → release"""
+    """Two-pass stage: scan → load (filtered) → render → release."""
     print(f"\n{'=' * 60}", flush=True)
     print(f"  Stage [{stage_label}]  (two-pass mode)", flush=True)
     print(f"  zoom: {', '.join(str(z) for z in zooms)}, max_zoom={max_zoom}",
@@ -1817,7 +1943,7 @@ def _process_stage_two_pass(filepath, zooms, max_zoom, output_dir, args,
 
 def _process_stage_chunk(filepath, zooms, max_zoom, output_dir, args,
                           bbox=None, stage_label=""):
-    """Single-pass stage (chunks after bbox splitting): full load → render → release"""
+    """Single-pass stage (for small chunks after bbox splitting): full load → render → release."""
     def way_filter(tags):
         return _way_zoom_ok(tags, max_zoom)
 
@@ -1865,10 +1991,10 @@ def _process_stage_chunk(filepath, zooms, max_zoom, output_dir, args,
 
 
 def main():
-    ap = argparse.ArgumentParser(description="OSM PBF → Tile Map")
+    ap = argparse.ArgumentParser(description="OSM PBF -> Tile Image Generator")
     ap.add_argument("input", help="Input .osm.pbf file")
     ap.add_argument("-z", "--zoom", default=None,
-                    help="Zoom level (e.g. 14 or 10-12); interactive input if not specified")
+                    help="Zoom level (e.g. 14 or 10-12), interactive input if not specified")
     ap.add_argument("-b", "--bbox", default=None,
                     help="Bounding box: south,west,north,east")
     ap.add_argument("-o", "--output", default="gpsmap", help="Output directory")
@@ -1879,14 +2005,60 @@ def main():
     ap.add_argument("--no-ways", action="store_true")
     ap.add_argument("--no-pois", action="store_true")
     ap.add_argument("--no-labels", action="store_true")
+    ap.add_argument("--lang", default="",
+                    help="Map language (zh/en/ja/ko/ru/ar/hi/th), default uses original name tags")
     ap.add_argument("--single-pass", action="store_true",
                     help="Single-pass mode (for small files)")
     args = ap.parse_args()
+    global _LANG
+    _LANG = args.lang
 
     fp = args.input
     if not os.path.exists(fp):
         print(f"File not found: {fp}")
         sys.exit(1)
+
+    # ── Language selection ──
+    if not _LANG:
+        if sys.stdin.isatty():
+            print(f"\nScanning available languages in {fp}...", flush=True)
+            langs = _scan_languages(fp)
+            if langs:
+                print("\nAvailable map languages:")
+                options = []
+                for i, (code, count) in enumerate(langs[:20]):
+                    name = _LANG_NAMES.get(code, "")
+                    label = f"{name} ({code})" if name else code
+                    if count > 5000:
+                        freq = "high frequency"
+                    elif count > 1000:
+                        freq = "medium frequency"
+                    else:
+                        freq = "low frequency"
+                    print(f"  {i + 1}. {label} [{freq}]")
+                    options.append(code)
+                print(f"  {len(options) + 1}. No filtering (use original name tags)")
+                try:
+                    choice = input(
+                        f"\nPlease select [default 1]: ").strip()
+                    if choice:
+                        idx = int(choice) - 1
+                        if 0 <= idx < len(options):
+                            _LANG = options[idx]
+                    else:
+                        _LANG = options[0]
+                except (ValueError, EOFError):
+                    _LANG = options[0]
+                if _LANG:
+                    lang_name = _LANG_NAMES.get(_LANG, _LANG)
+                    print(f"Selected: {lang_name} ({_LANG})")
+                else:
+                    print("Selected: no filtering")
+            else:
+                print("  No language tags found, using original name")
+        else:
+            print("Language not specified and non-interactive mode, using original name "
+                  "(use --lang to specify language)")
 
     if args.zoom is not None:
         z_str = str(args.zoom)
@@ -1918,7 +2090,7 @@ def main():
     os.makedirs(args.output, exist_ok=True)
     fsz = os.path.getsize(fp)
 
-    # ── Small file / single-pass mode: keep original behavior ──
+    # ── Small file / single-pass mode: preserve original behavior ──
     if args.single_pass or fsz < 200 * 1024 * 1024:
         print(f"\nSmall file / single-pass mode ({fsz / 1024 / 1024:.0f} MB)", flush=True)
         way_filter = lambda t: True
@@ -1929,7 +2101,7 @@ def main():
             temp_file = os.path.join(args.output, "_extracted.pbf")
             if _osmium_extract(fp, bbox, temp_file):
                 tsz = os.path.getsize(temp_file)
-                print(f"osmium extract succeeded: {tsz / 1024 / 1024:.0f} MB "
+                print(f"osmium extract successful: {tsz / 1024 / 1024:.0f} MB "
                       f"(original {fsz / 1024 / 1024:.0f} MB)", flush=True)
                 actual_input = temp_file
                 bbox = None
@@ -1985,7 +2157,7 @@ def main():
                   f"W={file_bbox[1]:.2f} N={file_bbox[2]:.2f} "
                   f"E={file_bbox[3]:.2f}", flush=True)
         else:
-            print("Unable to get file bbox, z13-14 will use full loading", flush=True)
+            print("Unable to get file bbox, z13-14 will use full load", flush=True)
 
     low_zooms = [z for z in zooms if z <= 8]
     mid_low_zooms = [z for z in zooms if 9 <= z <= 10]
@@ -2021,7 +2193,7 @@ def main():
             chunks = _split_bbox(file_bbox)
             if len(chunks) == 1:
                 print(f"\nz{min(high_zooms)}-{max(high_zooms)} "
-                      f"extent is small, no splitting needed", flush=True)
+                      f"extent is small, not splitting", flush=True)
                 _process_stage_two_pass(
                     fp, high_zooms, max(high_zooms), args.output, args,
                     bbox=bbox,
