@@ -1,18 +1,18 @@
 /*
- * Offline Map Viewer — Cardputer ADV (ESP32-S3FN8) No PSRAM
+ * 离线地图查看器 — Cardputer ADV (ESP32-S3FN8) 无 PSRAM
  *
- * Screen:  240×135 TFT
- * GPS:     UART2 → RX=15, TX=13 (ATGM336H, 115200)
- * SD:      CS=12, MOSI=14, CLK=40, MISO=39
+ * 屏幕:  240×135 TFT
+ * GPS:   UART2 → RX=15, TX=13 (ATGM336H, 115200)
+ * SD:    CS=12, MOSI=14, CLK=40, MISO=39
  *
- * Keys:
- *   Tab      Switch GPS Info / Map
- *   ; . , /  Pan map (hold for repeat)
- *   z / x    Zoom out / Zoom in (on press edge only)
- *   `        Return to GPS position
- *   Enter    Save screenshot to SD
+ * 按键:
+ *   Tab      切换 GPS 信息 / 地图
+ *   ; . , /  地图平移 (长按连续)
+ *   z / x    地图 缩小 / 放大 (仅按下瞬间)
+ *   `        回到 GPS 位置
+ *   Enter    截图保存到 SD
  *
- * SD Card Structure:
+ * SD 卡结构:
  *   /gpsmap/
  *   ├── gpsmap.ini
  *   ├── screenshot/shot_NNNN.bmp
@@ -28,7 +28,7 @@
 #include <time.h>
 
 // ═══════════════════════════════════════════
-//  Hardware
+//  硬件
 // ═══════════════════════════════════════════
 
 #define PIN_GPS_RX  15
@@ -42,7 +42,7 @@
 #define LORA_CS_PIN 5
 
 // ═══════════════════════════════════════════
-//  Paths
+//  路径
 // ═══════════════════════════════════════════
 
 #define PATH_BASE     "/gpsmap"
@@ -50,7 +50,7 @@
 #define PATH_SHOT_DIR "/gpsmap/screenshot"
 
 // ═══════════════════════════════════════════
-//  Parameters
+//  参数
 // ═══════════════════════════════════════════
 
 #define TILE_PX       256
@@ -61,15 +61,16 @@
 #define PAN_STEP      50
 #define DIR_REPEAT_MS 200
 #define MOVE_THRESH   0.00001
+#define GPS_TIMEOUT   5000
 #define REDRAW_MS     300
 #define SAVE_INTERVAL 60000
 #define HDR_H         12
 
-// Background color RGB565 (#f2efe9)
+// 背景色 RGB565 (#f2efe9)
 #define BG_COLOR 0xF77C
 
 // ═══════════════════════════════════════════
-//  Screen Enum
+//  屏幕枚举
 // ═══════════════════════════════════════════
 
 enum ScreenID { SCR_GPS_INFO = 0, SCR_MAP, SCR_COUNT };
@@ -77,7 +78,7 @@ ScreenID currentScreen = SCR_GPS_INFO;
 bool     autoSwitched  = false;
 
 // ═══════════════════════════════════════════
-//  Constellation Data (NMEA Parsing)
+//  星座数据 (NMEA 解析)
 // ═══════════════════════════════════════════
 
 #define NUM_CONST 4
@@ -104,7 +105,7 @@ int    ggaFixQuality = 0;
 String nmeaLineBuf   = "";
 
 // ═══════════════════════════════════════════
-//  Global State
+//  全局状态
 // ═══════════════════════════════════════════
 
 TinyGPSPlus     gps;
@@ -119,6 +120,7 @@ bool   hasLastPos = false;
 bool   dirty     = true;
 unsigned long lastDraw = 0;
 unsigned long lastSave = 0;
+unsigned long lastFixUpdate = 0;
 
 int  panX = 0, panY = 0;
 bool panning = false;
@@ -134,7 +136,7 @@ bool          showSavedMsg = false;
 unsigned long savedMsgTime = 0;
 int           shotNum      = 0;
 
-// Zoom key rising-edge detection
+// 缩放按键上升沿检测
 bool lastZState = false;
 bool lastXState = false;
 
@@ -165,12 +167,11 @@ void initGPS() {
 }
 
 // ═══════════════════════════════════════════
-//  Position Save / Load
+//  位置保存 / 读取
 // ═══════════════════════════════════════════
 
 void saveLastPosition() {
     SD.mkdir(PATH_BASE);
-    SD.mkdir("/gpsmap/ini");
     File f = SD.open(PATH_INI, FILE_WRITE);
     if (f) {
         f.printf("%.6f,%.6f,%d\n", curLat, curLon, curZoom);
@@ -186,8 +187,8 @@ bool loadLastPosition() {
     int c1 = line.indexOf(',');
     int c2 = line.indexOf(',', c1 + 1);
     if (c1 < 0 || c2 < 0) return false;
-    double lat  = line.substring(0, c1).toFloat();
-    double lon  = line.substring(c1 + 1, c2).toFloat();
+    double lat  = atof(line.substring(0, c1).c_str());
+    double lon  = atof(line.substring(c1 + 1, c2).c_str());
     int    zoom = line.substring(c2 + 1).toInt();
     if (lat == 0.0 && lon == 0.0) return false;
     if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return false;
@@ -200,7 +201,7 @@ bool loadLastPosition() {
 }
 
 // ═══════════════════════════════════════════
-//  Screenshot Counter
+//  截图计数器
 // ═══════════════════════════════════════════
 
 void initScreenshotCounter() {
@@ -230,7 +231,7 @@ void initScreenshotCounter() {
 }
 
 // ═══════════════════════════════════════════
-//  Coordinate Conversion
+//  坐标转换
 // ═══════════════════════════════════════════
 
 static inline double deg2rad(double d) {
@@ -250,7 +251,7 @@ void toPixel(double la, double lo, int z, double &px, double &py) {
 }
 
 // ═══════════════════════════════════════════
-//  NMEA Parsing
+//  NMEA 解析
 // ═══════════════════════════════════════════
 
 String getNmeaField(const String& line, int num) {
@@ -312,7 +313,7 @@ void parseNmeaLine(const String& line) {
 }
 
 // ═══════════════════════════════════════════
-//  Timezone & DST
+//  时区 & DST
 // ═══════════════════════════════════════════
 
 static int calcDow(int y, int m, int d) {
@@ -335,10 +336,9 @@ static int lastWday(int y, int m, int wday) {
 }
 
 static int getDST(int y, int mon, int d, int utcH, float lat, float lon) {
-    // North America (US & Canada)
     if (lat > 24 && lat < 72 && lon > -140 && lon < -50) {
-        if (lat < 23 && lon < -154) return 0;            // Hawaii
-        if (lat > 31 && lat < 37.5f && lon > -115 && lon < -109) return 0; // Arizona
+        if (lat < 23 && lon < -154) return 0;
+        if (lat > 31 && lat < 37.5f && lon > -115 && lon < -109) return 0;
         int sD = nthWday(y, 3, 0, 2);
         int eD = nthWday(y, 11, 0, 1);
         int so = (int)roundf(lon / 15.0f);
@@ -350,7 +350,6 @@ static int getDST(int y, int mon, int d, int utcH, float lat, float lon) {
         if (mon == 11) return (ld < eD || (ld == eD && lh < 1)) ? 1 : 0;
         return 0;
     }
-    // Europe
     if (lat > 34 && lat < 72 && lon > -12 && lon < 45) {
         int sD = lastWday(y, 3, 0), eD = lastWday(y, 10, 0);
         if (mon > 3 && mon < 10) return 1;
@@ -359,7 +358,6 @@ static int getDST(int y, int mon, int d, int utcH, float lat, float lon) {
         if (mon == 10) return (d < eD || (d == eD && utcH < 1)) ? 1 : 0;
         return 0;
     }
-    // Australia (south-east)
     if (lat < -28 && lon > 138 && lon < 155) {
         int sD = nthWday(y, 10, 0, 1), eD = nthWday(y, 4, 0, 1);
         int lh = utcH + 10, ld = d;
@@ -370,7 +368,6 @@ static int getDST(int y, int mon, int d, int utcH, float lat, float lon) {
         if (mon == 4)  return (ld < eD || (ld == eD && lh < 2)) ? 1 : 0;
         return 0;
     }
-    // New Zealand
     if (lat < -34 && lon > 165) {
         int sD = lastWday(y, 9, 0), eD = nthWday(y, 4, 0, 1);
         int lh = utcH + 12, ld = d;
@@ -414,6 +411,8 @@ LocalTime getLocalTime() {
         utc.tm_hour = lt.hour;
         utc.tm_min  = lt.minute;
         utc.tm_sec  = lt.second;
+        setenv("TZ", "UTC", 1);
+        tzset();
         time_t ep = mktime(&utc) + (long)lt.utcOffset * 3600L;
         struct tm loc;
         gmtime_r(&ep, &loc);
@@ -441,7 +440,7 @@ int getTotalSatellites() {
 }
 
 // ═══════════════════════════════════════════
-//  JPEG Decode (byte-order fix)
+//  JPEG 解码 (字节序修正)
 // ═══════════════════════════════════════════
 
 int jpegDrawCB(JPEGDRAW *p) {
@@ -450,7 +449,6 @@ int jpegDrawCB(JPEGDRAW *p) {
         p->x + p->iWidth <= 0 || p->y + p->iHeight <= 0)
         return 1;
 
-    // Fix byte order: JPEGDEC outputs big-endian, TFT expects little-endian
     uint16_t *px = (uint16_t *)p->pPixels;
     int count = p->iWidth * p->iHeight;
     for (int i = 0; i < count; i++) {
@@ -463,7 +461,7 @@ int jpegDrawCB(JPEGDRAW *p) {
 }
 
 // ═══════════════════════════════════════════
-//  Tile Loading
+//  瓦片加载
 // ═══════════════════════════════════════════
 
 bool drawTile(int tx, int ty, int z, int sx, int sy) {
@@ -487,7 +485,7 @@ bool drawTile(int tx, int ty, int z, int sx, int sy) {
 }
 
 // ═══════════════════════════════════════════
-//  Screenshot (BMP)
+//  截图 (BMP)
 // ═══════════════════════════════════════════
 
 bool saveScreenshot() {
@@ -504,7 +502,6 @@ bool saveScreenshot() {
     int pad = (4 - (rowBytes % 4)) % 4;
     int imgSize = (rowBytes + pad) * h;
 
-    // BMP file header
     uint8_t fh[14] = {};
     fh[0] = 'B'; fh[1] = 'M';
     int fs = 14 + 40 + imgSize;
@@ -512,7 +509,6 @@ bool saveScreenshot() {
     fh[10] = 54;
     f.write(fh, 14);
 
-    // BMP info header
     uint8_t ih[40] = {};
     ih[0] = 40;
     ih[4] = w;       ih[5] = w >> 8;
@@ -522,7 +518,6 @@ bool saveScreenshot() {
     ih[22] = imgSize >> 16; ih[23] = imgSize >> 24;
     f.write(ih, 40);
 
-    // Pixel data (bottom-up, BGR order)
     uint8_t *row = (uint8_t *)malloc(rowBytes + pad);
     if (!row) { f.close(); return false; }
     if (pad > 0) memset(row + rowBytes, 0, pad);
@@ -530,9 +525,9 @@ bool saveScreenshot() {
     for (int y = h - 1; y >= 0; y--) {
         for (int x = 0; x < w; x++) {
             uint16_t c = (uint16_t)cv->readPixel(x, y);
-            row[x * 3 + 0] = (uint8_t)((c & 0x1F) << 3);        // Blue
-            row[x * 3 + 1] = (uint8_t)(((c >> 5) & 0x3F) << 2); // Green
-            row[x * 3 + 2] = (uint8_t)(((c >> 11) & 0x1F) << 3);// Red
+            row[x * 3 + 0] = (uint8_t)((c & 0x1F) << 3);
+            row[x * 3 + 1] = (uint8_t)(((c >> 5) & 0x3F) << 2);
+            row[x * 3 + 2] = (uint8_t)(((c >> 11) & 0x1F) << 3);
         }
         f.write(row, rowBytes + pad);
     }
@@ -542,14 +537,14 @@ bool saveScreenshot() {
 }
 
 // ═══════════════════════════════════════════
-//  GPS Info Screen
+//  GPS 信息页面
 // ═══════════════════════════════════════════
 
 void drawScreenGpsInfo() {
     char buf[48];
     int y = 2;
 
-    // ── Time ──
+    // ── 时间 ──
     LocalTime lt = getLocalTime();
     if (lt.valid) {
         cv->setTextSize(2);
@@ -584,7 +579,7 @@ void drawScreenGpsInfo() {
         y += 12;
     }
 
-    // ── Fix Info ──
+    // ── 定位信息 ──
     cv->setTextSize(1);
     const char* fq = "---";
     if      (ggaFixQuality == 1) fq = "GPS";
@@ -605,7 +600,7 @@ void drawScreenGpsInfo() {
     cv->drawLine(4, y, scrW - 4, y, TFT_DARKGREY);
     y += 4;
 
-    // ── Constellation Bar Chart ──
+    // ── 星座柱状 ──
     int maxVis = 1;
     for (int i = 0; i < NUM_CONST; i++)
         if (constInfo[i].visible > maxVis) maxVis = constInfo[i].visible;
@@ -640,7 +635,7 @@ void drawScreenGpsInfo() {
     cv->drawLine(4, y, scrW - 4, y, TFT_DARKGREY);
     y += 4;
 
-    // ── Coordinates & Speed ──
+    // ── 坐标 & 速度 ──
     if (gpsFix || gps.location.isValid()) {
         cv->setTextSize(1);
         cv->setTextColor(TFT_GREEN, TFT_BLACK);
@@ -665,11 +660,11 @@ void drawScreenGpsInfo() {
 }
 
 // ═══════════════════════════════════════════
-//  Map Screen
+//  地图页面
 // ═══════════════════════════════════════════
 
 void drawScreenMap() {
-    // No position data at all
+    // 无任何位置
     if (!gpsFix && !hasLastPos && !panning) {
         cv->setTextColor(TFT_WHITE, TFT_BLACK);
         cv->setTextSize(1);
@@ -679,7 +674,7 @@ void drawScreenMap() {
         return;
     }
 
-    // ── Tile Rendering ──
+    // ── 瓦片渲染 ──
     int tx, ty;
     toTile(curLat, curLon, curZoom, tx, ty);
     double gpx, gpy;
@@ -696,7 +691,7 @@ void drawScreenMap() {
             if (sx + TILE_PX < 0 || sx > scrW) continue;
             if (sy + TILE_PX < 0 || sy > scrH) continue;
             if (!drawTile(tx + dx, ty + dy, curZoom, sx, sy)) {
-                // Missing tile: fill with background color (not grey)
+                // 缺失瓦片: 背景色填充 (不是灰色)
                 int rx = (sx > 0) ? sx : 0;
                 int ry = (sy > 0) ? sy : 0;
                 int rw = min((int)TILE_PX, scrW - rx);
@@ -707,16 +702,16 @@ void drawScreenMap() {
         }
     }
 
-    // ── Position Cursor ──
+    // ── 顶栏 ──
+    cv->fillRect(0, 0, scrW, HDR_H, 0x0000);
+
+    // ── 定位光标 ──
     int mx = scrW / 2 - panX;
     int my = scrH / 2 - panY;
     if (0 <= mx && mx < scrW && 0 <= my && my < scrH) {
         cv->fillCircle(mx, my, 4, TFT_WHITE);
         cv->fillCircle(mx, my, 2, TFT_RED);
     }
-
-    // ── Top Bar ──
-    cv->fillRect(0, 0, scrW, HDR_H, 0x0000);
     cv->setTextSize(1);
 
     cv->setTextColor(TFT_WHITE, 0x0000);
@@ -745,7 +740,6 @@ void drawScreenMap() {
         cv->drawString(satBuf, scrW - cv->textWidth(satBuf) - 4, 2);
     }
 
-    // Bottom bar: GPS search indicator
     if (!gpsFix) {
         cv->fillRect(0, scrH - 12, scrW, 12, 0x0000);
         cv->setTextColor(TFT_YELLOW, 0x0000);
@@ -754,7 +748,7 @@ void drawScreenMap() {
 }
 
 // ═══════════════════════════════════════════
-//  Screen Dispatcher
+//  屏幕调度
 // ═══════════════════════════════════════════
 
 void updateScreen(bool force = false) {
@@ -777,7 +771,6 @@ void updateScreen(bool force = false) {
         case SCR_MAP:      drawScreenMap();     break;
     }
 
-    // "Saved!" overlay
     if (showSavedMsg) {
         if (now - savedMsgTime < 1500) {
             cv->fillRect(70, 55, 100, 25, TFT_BLACK);
@@ -794,7 +787,7 @@ void updateScreen(bool force = false) {
 }
 
 // ═══════════════════════════════════════════
-//  GPS Read
+//  GPS 读取
 // ═══════════════════════════════════════════
 
 void readGPS() {
@@ -808,7 +801,7 @@ void readGPS() {
                 parseNmeaLine(nmeaLineBuf);
             nmeaLineBuf = "";
         } else if (c != '\r') {
-            nmeaLineBuf += c;
+            if (nmeaLineBuf.length() < 128) nmeaLineBuf += c;
         }
     }
 
@@ -822,10 +815,10 @@ void readGPS() {
             curLat  = nlat;
             curLon  = nlon;
             gpsFix  = true;
+            lastFixUpdate = millis();
             panning = false;
             dirty   = true;
 
-            // Auto-switch to map on first fix
             if (!autoSwitched) {
                 currentScreen = SCR_MAP;
                 autoSwitched  = true;
@@ -833,7 +826,11 @@ void readGPS() {
         }
     }
 
-    // Periodically save last position
+    if (gpsFix && millis() - lastFixUpdate > GPS_TIMEOUT) {
+        gpsFix = false;
+        dirty  = true;
+    }
+
     if (gpsFix && millis() - lastSave >= SAVE_INTERVAL) {
         lastSave = millis();
         saveLastPosition();
@@ -841,20 +838,22 @@ void readGPS() {
 }
 
 // ═══════════════════════════════════════════
-//  Keyboard Input
+//  键盘
 // ═══════════════════════════════════════════
 
 void handleInput() {
     M5Cardputer.update();
 
-    // Zoom: rising-edge detection
+    // 缩放: 上升沿检测 (仅地图页)
     bool curZ = M5Cardputer.Keyboard.isKeyPressed('z');
     bool curX = M5Cardputer.Keyboard.isKeyPressed('x');
-    if (curZ && !lastZState) {
-        if (curZoom > ZOOM_MIN) { curZoom--; dirty = true; }
-    }
-    if (curX && !lastXState) {
-        if (curZoom < ZOOM_MAX) { curZoom++; dirty = true; }
+    if (currentScreen == SCR_MAP) {
+        if (curZ && !lastZState) {
+            if (curZoom > ZOOM_MIN) { curZoom--; dirty = true; }
+        }
+        if (curX && !lastXState) {
+            if (curZoom < ZOOM_MAX) { curZoom++; dirty = true; }
+        }
     }
     lastZState = curZ;
     lastXState = curX;
@@ -864,7 +863,7 @@ void handleInput() {
             Keyboard_Class::KeysState status =
                 M5Cardputer.Keyboard.keysState();
 
-            // Tab: switch screen
+            // Tab: 切换
             if (status.tab) {
                 currentScreen = (ScreenID)((currentScreen + 1) % SCR_COUNT);
                 dirUp = dirDown = dirLeft = dirRight = false;
@@ -874,7 +873,7 @@ void handleInput() {
                 return;
             }
 
-            // Enter: save screenshot
+            // Enter: 截图
             if (status.enter) {
                 if (saveScreenshot()) {
                     showSavedMsg = true;
@@ -885,7 +884,7 @@ void handleInput() {
                 return;
             }
 
-            // Map screen keys
+            // 地图页按键
             if (currentScreen == SCR_MAP) {
                 dirUp = dirDown = dirLeft = dirRight = false;
 
@@ -934,7 +933,6 @@ void setup() {
 
     initGPS();
 
-    // Deassert LoRa CS so it doesn't interfere with SPI bus
     pinMode(LORA_CS_PIN, OUTPUT);
     digitalWrite(LORA_CS_PIN, HIGH);
 
@@ -978,7 +976,6 @@ void loop() {
     readGPS();
     handleInput();
 
-    // Continuous panning while direction key is held
     if (currentScreen == SCR_MAP &&
         (dirUp || dirDown || dirLeft || dirRight) &&
         millis() - lastDirStep >= DIR_REPEAT_MS)
