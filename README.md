@@ -115,7 +115,8 @@ python osm2tiles.py input.osm.pbf -z 10-13 -b S,W,N,E
 python osm2tiles.py input.osm.pbf -b S,W,N,E
 ```
 
-**update: 10G free RAM should be a plenty if your map is not too large, I have done a lot optimization.** If you want to convert global map, I have tested the last edition(which can be 2-3 times more RAM used than current version) which need 106G+.
+**update: 10G free RAM should be a plenty if your map is not too large, I have done a lot optimization.** 
+If you want to convert global map, I have tested the lastest edition under 26G usage in my test(previously needed 106G+).
 
 **If you're using PowerShell, the screen might not update that might you suspect the program is freezing.** 
 
